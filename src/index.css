@@ -4,16 +4,26 @@
 
 :root {
   --novek-blue: #1e40af;
+  --novek-surface: rgba(255, 255, 255, 0.78);
+  --novek-border: rgba(148, 163, 184, 0.22);
 }
 
 body {
-  @apply bg-slate-950 text-slate-100 min-h-screen font-sans;
+  @apply text-slate-900 min-h-screen font-sans antialiased;
+  background-color: #f5f7fb;
+  background-image:
+    radial-gradient(circle at top left, rgba(191, 219, 254, 0.6), transparent 30%),
+    radial-gradient(circle at top right, rgba(224, 242, 254, 0.75), transparent 28%),
+    linear-gradient(180deg, #f8fbff 0%, #eef3f9 100%);
 }
 
 .glass {
-  @apply bg-white/5 backdrop-blur-lg border border-white/10 shadow-2xl;
+  background: var(--novek-surface);
+  border: 1px solid var(--novek-border);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.08);
+  @apply backdrop-blur-xl;
 }
 
 .btn-primary {
-  @apply bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition-all duration-200 active:scale-95 shadow-lg shadow-blue-500/20;
+  @apply bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-xl transition-all duration-200 active:scale-95 shadow-lg shadow-blue-200/80;
 }

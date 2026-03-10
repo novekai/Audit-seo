@@ -118,16 +118,16 @@ const Settings = () => {
         const isSaving = saving[svc.key];
 
         return (
-            <div className="glass rounded-xl p-6 border border-white/5 hover:border-blue-500/20 transition-all">
+            <div className="glass rounded-xl p-6 border border-slate-200/80 hover:border-blue-200 transition-all">
                 {/* Header */}
                 <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-blue-600/10 rounded-lg flex items-center justify-center border border-blue-500/20">
-                            <svc.icon className="w-5 h-5 text-blue-400" />
+                        <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center border border-blue-100">
+                            <svc.icon className="w-5 h-5 text-blue-500" />
                         </div>
                         <div>
-                            <h3 className="font-semibold text-white">{svc.title}</h3>
-                            <p className="text-xs text-slate-400">{svc.description}</p>
+                            <h3 className="font-semibold text-slate-900">{svc.title}</h3>
+                            <p className="text-xs text-slate-500">{svc.description}</p>
                         </div>
                     </div>
                     {conn && (
@@ -152,15 +152,15 @@ const Settings = () => {
 
                 {/* Cookie input */}
                 <div className="space-y-3">
-                    <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <div className="flex items-center gap-2 text-xs text-slate-500">
                         <ClipboardPaste className="w-3.5 h-3.5" />
                         <span>
-                            Connectez-vous sur <a href={svc.loginUrl} target="_blank" rel="noopener" className="text-blue-400 hover:underline">{svc.loginUrl}</a> puis exportez vos cookies avec Cookie-Editor
+                            Connectez-vous sur <a href={svc.loginUrl} target="_blank" rel="noopener" className="text-blue-500 hover:underline">{svc.loginUrl}</a> puis exportez vos cookies avec Cookie-Editor
                         </span>
                     </div>
 
                     <textarea
-                        className="w-full h-24 bg-slate-900/50 border border-white/10 rounded-lg p-3 text-xs font-mono text-slate-300 placeholder-slate-600 focus:outline-none focus:border-blue-500/40 resize-none"
+                        className="w-full h-24 bg-white/90 border border-slate-200 rounded-lg p-3 text-xs font-mono text-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-400 resize-none shadow-sm"
                         placeholder='[{"name": "SID", "value": "...", "domain": ".google.com", ...}]'
                         value={cookieInputs[svc.key]}
                         onChange={e => setCookieInputs(c => ({ ...c, [svc.key]: e.target.value }))}
@@ -169,7 +169,7 @@ const Settings = () => {
                     <button
                         onClick={() => saveCookies(svc.key)}
                         disabled={isSaving || !cookieInputs[svc.key]?.trim()}
-                        className="w-full py-2.5 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-blue-600/20"
+                        className="w-full py-2.5 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-blue-200/80"
                     >
                         {isSaving ? (
                             <>Enregistrement...</>
@@ -191,29 +191,29 @@ const Settings = () => {
 
     return (
         <div className="max-w-5xl mx-auto space-y-8">
-            <div className="flex items-center gap-4 border-b border-white/5 pb-6">
-                <div className="w-12 h-12 bg-blue-600/20 rounded-xl flex items-center justify-center border border-blue-500/30">
-                    <SettingsIcon className="w-6 h-6 text-blue-400" />
+            <div className="flex items-center gap-4 border-b border-slate-200 pb-6">
+                <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center border border-blue-100">
+                    <SettingsIcon className="w-6 h-6 text-blue-500" />
                 </div>
                 <div>
-                    <h1 className="text-2xl font-bold text-white">Import de sessions</h1>
-                    <p className="text-slate-400">Importez vos cookies pour activer les modules d'audit avancés</p>
+                    <h1 className="text-2xl font-bold text-slate-900">Import de sessions</h1>
+                    <p className="text-slate-600">Importez vos cookies pour activer les modules d'audit avancés</p>
                 </div>
             </div>
 
             {/* Instructions */}
-            <div className="glass rounded-2xl p-6 border border-blue-500/10 bg-blue-900/5">
+            <div className="glass rounded-2xl p-6 border border-blue-100 bg-blue-50/60">
                 <div className="flex gap-4">
-                    <div className="w-10 h-10 bg-blue-600/10 rounded-full flex items-center justify-center shrink-0 mt-0.5">
-                        <AlertCircle className="w-5 h-5 text-blue-400" />
+                    <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center shrink-0 mt-0.5 border border-blue-100">
+                        <AlertCircle className="w-5 h-5 text-blue-500" />
                     </div>
                     <div className="space-y-3">
-                        <h4 className="font-semibold text-white">Comment importer vos cookies ?</h4>
-                        <ol className="text-sm text-slate-400 leading-relaxed space-y-1.5 list-decimal list-inside">
-                            <li>Installez l'extension Chrome <a href="https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm" target="_blank" rel="noopener" className="text-blue-400 hover:underline font-medium">Cookie-Editor</a> (gratuit)</li>
+                        <h4 className="font-semibold text-slate-900">Comment importer vos cookies ?</h4>
+                        <ol className="text-sm text-slate-600 leading-relaxed space-y-1.5 list-decimal list-inside">
+                            <li>Installez l'extension Chrome <a href="https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm" target="_blank" rel="noopener" className="text-blue-500 hover:underline font-medium">Cookie-Editor</a> (gratuit)</li>
                             <li>Connectez-vous sur le site du service (Google, MRM, Ubersuggest)</li>
-                            <li>Cliquez sur l'icône Cookie-Editor → <strong className="text-white">Export</strong></li>
-                            <li>Collez le JSON dans le champ ci-dessous → <strong className="text-white">Enregistrer</strong></li>
+                            <li>Cliquez sur l'icône Cookie-Editor → <strong className="text-slate-900">Export</strong></li>
+                            <li>Collez le JSON dans le champ ci-dessous → <strong className="text-slate-900">Enregistrer</strong></li>
                         </ol>
                         <p className="text-xs text-slate-500">
                             🔒 Vos cookies sont chiffrés en AES-256 avant stockage. Ils servent uniquement à naviguer sur les sites d'audit. Vos mots de passe ne sont jamais stockés.

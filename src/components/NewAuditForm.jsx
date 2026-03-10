@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Send, Globe, Layout as LayoutIcon, FileSpreadsheet, FileBarChart } from 'lucide-react';
+import { Send, Globe, FileSpreadsheet, FileBarChart } from 'lucide-react';
 
 const NewAuditForm = ({ onAuditSuccess }) => {
     const [formData, setFormData] = useState({
@@ -64,8 +64,8 @@ const NewAuditForm = ({ onAuditSuccess }) => {
     return (
         <div className="max-w-3xl mx-auto">
             <div className="mb-8">
-                <h3 className="text-xl font-semibold mb-2">Lancer une nouvelle analyse</h3>
-                <p className="text-slate-400 text-sm">
+                <h3 className="text-xl font-semibold text-slate-900 mb-2">Lancer une nouvelle analyse</h3>
+                <p className="text-slate-600 text-sm">
                     Remplissez les informations ci-dessous. Le système utilisera Playwright pour les captures et Airtable pour le stockage.
                 </p>
             </div>
@@ -73,8 +73,8 @@ const NewAuditForm = ({ onAuditSuccess }) => {
             <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {fields.map((field) => (
                     <div key={field.name} className={`space-y-2 ${field.name === 'mrmReportUrl' ? 'md:col-span-2' : ''}`}>
-                        <label className="text-sm font-medium text-slate-300 ml-1 flex items-center gap-2">
-                            <field.icon size={16} className="text-blue-400" />
+                        <label className="text-sm font-medium text-slate-700 ml-1 flex items-center gap-2">
+                            <field.icon size={16} className="text-blue-500" />
                             {field.label}
                         </label>
                         <input
@@ -82,7 +82,7 @@ const NewAuditForm = ({ onAuditSuccess }) => {
                             name={field.name}
                             value={formData[field.name]}
                             onChange={handleChange}
-                            className="w-full bg-slate-900/50 border border-slate-800 rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/50 transition-all text-white placeholder:text-slate-600"
+                            className="w-full bg-white/90 border border-slate-200 rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all text-slate-900 placeholder:text-slate-400 shadow-sm"
                             placeholder={field.placeholder}
                             required
                         />

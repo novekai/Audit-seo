@@ -3,9 +3,6 @@ import {
     BarChart3,
     Hourglass,
     RefreshCw,
-    CheckCircle2,
-    XCircle,
-    ChevronRight,
     Clock,
     ExternalLink,
     Bot
@@ -138,19 +135,19 @@ const Progression = () => {
     };
 
     const StepItem = ({ step }) => (
-        <div className="flex flex-col p-4 rounded-xl border border-white/5 bg-slate-900/30 hover:bg-slate-900/50 transition-all group gap-2">
+        <div className="flex flex-col p-4 rounded-xl border border-slate-200 bg-white/80 hover:bg-white transition-all group gap-2 shadow-sm">
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center bg-slate-800 border border-white/5 group-hover:border-blue-500/30 transition-all ${['SUCCESS', 'SUCCES', 'FAIT'].includes(step.statut?.toUpperCase()) ? 'bg-green-500/5 border-green-500/20' : ''
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center bg-slate-50 border border-slate-200 group-hover:border-blue-300 transition-all ${['SUCCESS', 'SUCCES', 'FAIT'].includes(step.statut?.toUpperCase()) ? 'bg-green-50 border-green-200' : ''
                         }`}>
                         {getStepIcon(step.step_key, step.statut)}
                     </div>
                     <div>
-                        <h4 className="font-semibold text-sm text-slate-200 capitalize leading-none mb-1">{step.step_key.replace(/_/g, ' ')}</h4>
+                        <h4 className="font-semibold text-sm text-slate-800 capitalize leading-none mb-1">{step.step_key.replace(/_/g, ' ')}</h4>
                         <div className="flex items-center gap-2">
                             <span className={`text-[10px] font-bold uppercase tracking-tight px-1.5 py-0.5 rounded ${step.statut === 'SUCCESS' ? 'bg-green-500/10 text-green-500' :
                                 step.statut === 'EN_COURS' ? 'bg-blue-500/10 text-blue-400' :
-                                    'bg-slate-800 text-slate-500'
+                                    'bg-slate-100 text-slate-500'
                                 }`}>
                                 {step.statut}
                             </span>
@@ -167,7 +164,7 @@ const Progression = () => {
             </div>
             {step.resultat && (
                 <div className="mt-1 pl-16">
-                    <p className="text-[11px] text-slate-400 leading-relaxed bg-slate-800/20 p-2 rounded-lg border border-white/5">
+                    <p className="text-[11px] text-slate-600 leading-relaxed bg-slate-50 p-2 rounded-lg border border-slate-200">
                         {step.resultat.replace(/^"|"$/g, '')}
                     </p>
                 </div>
@@ -175,7 +172,7 @@ const Progression = () => {
         </div>
     );
 
-    if (loading) return <div className="py-20 text-center animate-pulse text-blue-400">Chargement des audits...</div>;
+    if (loading) return <div className="py-20 text-center animate-pulse text-blue-600">Chargement des audits...</div>;
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-full">
@@ -190,12 +187,12 @@ const Progression = () => {
                             key={audit.id}
                             onClick={() => fetchAuditDetails(audit.id)}
                             className={`w-full p-4 rounded-2xl border transition-all text-left group ${activeAudit?.id === audit.id
-                                ? 'bg-blue-600/10 border-blue-500/30 ring-1 ring-blue-500/20'
-                                : 'bg-slate-900/40 border-white/5 hover:border-white/10'
+                                ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-100'
+                                : 'bg-white/80 border-slate-200 hover:border-slate-300 shadow-sm'
                                 }`}
                         >
                             <div className="flex justify-between items-start mb-2">
-                                <span className="font-bold text-white group-hover:text-blue-400 transition-colors truncate max-w-[150px]">
+                                <span className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors truncate max-w-[150px]">
                                     {audit.nom_site}
                                 </span>
                                 <span className={`text-[10px] px-2 py-0.5 rounded-full ${audit.statut_global === 'TERMINE' ? 'bg-green-500/10 text-green-400' : 'bg-blue-500/10 text-blue-400'
@@ -214,21 +211,21 @@ const Progression = () => {
             <div className="lg:col-span-2 space-y-6">
                 {activeAudit ? (
                     <>
-                        <div className="glass rounded-2xl p-6 border border-white/5">
+                        <div className="glass rounded-2xl p-6 border border-slate-200/80">
                             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
                                 <div>
-                                    <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                                    <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
                                         {activeAudit.nom_site}
-                                        <a href={activeAudit.url_site} target="_blank" rel="noreferrer" className="text-slate-500 hover:text-blue-400 transition-all">
+                                        <a href={activeAudit.url_site} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-blue-500 transition-all">
                                             <ExternalLink className="w-4 h-4" />
                                         </a>
                                     </h2>
-                                    <p className="text-sm text-slate-400 italic">Lancé le {new Date(activeAudit.created_at).toLocaleString()}</p>
+                                    <p className="text-sm text-slate-500 italic">Lancé le {new Date(activeAudit.created_at).toLocaleString()}</p>
                                 </div>
                                 <div className="flex gap-4">
-                                    <div className="text-center px-4 py-2 bg-slate-800/50 rounded-xl border border-white/5">
+                                    <div className="text-center px-4 py-2 bg-white/85 rounded-xl border border-slate-200 shadow-sm">
                                         <p className="text-[10px] text-slate-500 uppercase">Progression</p>
-                                        <p className="text-lg font-bold text-blue-400">
+                                        <p className="text-lg font-bold text-blue-600">
                                             {(() => {
                                                 const total = activeAudit.steps?.length || 1;
                                                 const completed = activeAudit.steps?.filter(s =>
@@ -249,8 +246,8 @@ const Progression = () => {
                         </div>
                     </>
                 ) : (
-                    <div className="glass rounded-2xl p-20 text-center border border-dashed border-white/5">
-                        <BarChart3 className="w-12 h-12 text-slate-700 mx-auto mb-4" />
+                    <div className="glass rounded-2xl p-20 text-center border border-dashed border-slate-200">
+                        <BarChart3 className="w-12 h-12 text-slate-400 mx-auto mb-4" />
                         <p className="text-slate-500">Sélectionnez un audit pour voir sa progression</p>
                     </div>
                 )}
