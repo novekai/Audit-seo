@@ -15,6 +15,7 @@ dist-ssr
 # Environnement
 .env
 .env.*
+!.env.example
 *.local
 
 # Base de données locale

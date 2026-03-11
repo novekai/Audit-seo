@@ -7,17 +7,17 @@
 ## 🏗️ Architecture
 
 ```
-┌──────────────────────────────────────────────────────────┐
+┌───────────────────────────────────────────────────────────┐
 │                    FRONTEND (React)                       │
 │  Inscription / Connexion / Dashboard / Suivi en temps réel│
-└────────────────────┬─────────────────────────────────────┘
+└────────────────────┬──────────────────────────────────────┘
                      │ WebSocket + REST API
-┌────────────────────▼─────────────────────────────────────┐
+┌────────────────────▼──────────────────────────────────────┐
 │                  BACKEND (Express.js)                     │
-│   • API REST (auth, audits, sessions)                    │
-│   • BullMQ Worker (30 étapes d'audit)                    │
-│   • Airtable Poller (sync bidirectionnel)                │
-└────────────────────┬─────────────────────────────────────┘
+│   • API REST (auth, audits, sessions)                     │
+│   • BullMQ Worker (30 étapes d'audit)                     │
+│   • Airtable Poller (sync bidirectionnel)                 │
+└────────────────────┬──────────────────────────────────────┘
                      │
    ┌─────────────────┼──────────────────┐
    ▼                 ▼                  ▼
@@ -34,7 +34,7 @@
 | Frontend | React 19 + Vite + TailwindCSS |
 | Backend | Express.js (ESM) |
 | File d'attente | BullMQ + Redis |
-| Base de données | SQLite (locale) |
+| Base de données | PostgreSQL |
 | Navigateur | Playwright (captures écran) |
 | IA (rognage) | OpenAI GPT-4o Vision |
 | Stockage images | Cloudinary |
@@ -73,7 +73,7 @@ Le robot exécute automatiquement les étapes suivantes pour chaque site :
 | 21 | Synthèse Audit | `Img_planD'action` |
 | 22 | Requêtes Clés | `Img_Requetes_cles` |
 | 23 | Données Images | `Img_donnee image` |
-| 24 | Longueur de page | `Img_longeur_page` |
+| 24 | Longueur de page | `Img_longeur_page_plan` |
 
 ### Modules avec authentification
 | # | Module | Champ Airtable |
@@ -92,7 +92,10 @@ Créez un fichier `.env` à la racine :
 # Serveur
 PORT=3000
 JWT_SECRET=votre_secret_jwt
-ENCRYPT_KEY=cle_hex_32_octets_pour_aes256
+SESSION_ENCRYPT_KEY=cle_aes_256_pour_les_sessions
+
+# PostgreSQL (requis)
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/smart_audit
 
 # Redis (requis pour BullMQ)
 REDIS_URL=redis://localhost:6379
@@ -104,6 +107,11 @@ CLOUDINARY_API_SECRET=votre_api_secret
 
 # OpenAI (rognage IA des captures)
 OPENAI_API_KEY=sk-votre_cle_openai
+
+# Google APIs (Sheets + Search Console)
+GOOGLE_CLIENT_ID=votre_google_client_id
+GOOGLE_CLIENT_SECRET=votre_google_client_secret
+GOOGLE_REFRESH_TOKEN=votre_google_refresh_token
 
 # Airtable (destination des résultats)
 AIRTABLE_API_KEY=pat_votre_token
@@ -119,7 +127,7 @@ AIRTABLE_TABLE_ID=tblXXXXXXXXXX
 3. **Connecter le dépôt Git** du projet
 
 ### Variables d'environnement Railway
-Toutes les variables ci-dessus + la variable `REDIS_URL` fournie automatiquement par le plugin Redis.
+Définissez au minimum `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `SESSION_ENCRYPT_KEY`, les clés Cloudinary/OpenAI/Airtable et les identifiants Google OAuth.
 
 ### Commandes
 Le `Dockerfile` gère automatiquement :
@@ -137,6 +145,12 @@ npm install
 # Installer Playwright
 npx playwright install chromium
 
+# Démarrer PostgreSQL en local
+docker run --name smart-audit-postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=smart_audit -p 5432:5432 -d postgres:16
+
+# Démarrer Redis en local
+docker run --name smart-audit-redis -p 6379:6379 -d redis:7
+
 # Lancer en développement (frontend + backend)
 npm run dev
 
@@ -147,7 +161,7 @@ npm run build
 npm start
 ```
 
-> ⚠️ **Redis requis** : Le backend nécessite une instance Redis pour BullMQ. Utilisez Docker (`docker run -p 6379:6379 redis`) ou [Memurai](https://www.memurai.com/) sur Windows.
+> ⚠️ **PostgreSQL + Redis requis** : le backend dépend désormais de PostgreSQL pour les données applicatives et de Redis pour BullMQ.
 
 ## 📁 Structure du Projet
 
@@ -156,7 +170,7 @@ server/
 ├── index.js              # Point d'entrée Express
 ├── airtable.js           # Helpers Airtable (sync champs)
 ├── airtablePoller.js     # Polling Airtable → créer audits
-├── db.js                 # Base SQLite (utilisateurs, sessions)
+├── db.js                 # Adaptateur PostgreSQL (utilisateurs, audits, sessions)
 ├── jobs/
 │   └── worker.js         # BullMQ Worker (orchestration des 30 étapes)
 ├── modules/

@@ -102,7 +102,7 @@ export const initWorker = (io, db) => {
             // Check if audit was cancelled or finished prematurely
             const checkCancellation = async () => {
                 const currentAudit = await db.get('SELECT statut_global FROM audits WHERE id = ?', [auditId]);
-                if (!currentAudit || currentAudit.statut_global === 'TERMINE' || currentAudit.statut_global === 'Erreur') {
+                if (!currentAudit || currentAudit.statut_global === 'TERMINE' || currentAudit.statut_global === 'ERREUR') {
                     console.log(`[WORKER] [JOB ${job.id}] Audit ${auditId} was CANCELLED or marked as FINISHED. Stopping worker.`);
                     return true;
                 }

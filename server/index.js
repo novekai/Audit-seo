@@ -125,7 +125,8 @@ app.post('/api/auth/register', async (req, res) => {
         await db.run('INSERT INTO users (id, email, password) VALUES (?, ?, ?)', [id, email, hashedPassword]);
         res.status(201).json({ message: 'Compte créé avec succès' });
     } catch (error) {
-        const msg = error.message && error.message.includes('UNIQUE') ? 'Email déjà utilisé' : 'Erreur serveur';
+        const isDuplicateEmail = error?.code === '23505' || (error.message && error.message.includes('UNIQUE'));
+        const msg = isDuplicateEmail ? 'Email déjà utilisé' : 'Erreur serveur';
         res.status(400).json({ error: msg });
     }
 });

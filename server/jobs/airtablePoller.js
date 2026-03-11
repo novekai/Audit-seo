@@ -5,6 +5,20 @@ import { v4 as uuidv4 } from 'uuid';
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 const table = base(process.env.AIRTABLE_TABLE_ID);
 
+function mapAirtableStatusToLocalStatus(status) {
+    switch (status) {
+        case 'fait':
+            return 'TERMINE';
+        case 'Erreur':
+            return 'ERREUR';
+        case 'En cours':
+            return 'EN_COURS';
+        case 'A faire':
+        default:
+            return 'EN_ATTENTE';
+    }
+}
+
 export async function initAirtablePoller(io, db) {
     console.log('[POLLER] Airtable Sync initialized (Interval: 20s)');
 
@@ -55,7 +69,7 @@ async function syncAirtableToDb(io, db) {
 
             if (existing) {
                 // Determine what the target local status should be
-                const targetLocalStatus = airtableStatus === 'fait' ? 'TERMINE' : 'EN_COURS';
+                const targetLocalStatus = mapAirtableStatusToLocalStatus(airtableStatus);
 
                 // 1. Bidirectional Sync: Only update if REALLY needed
                 const hasChanged =
@@ -109,7 +123,7 @@ async function syncAirtableToDb(io, db) {
                     { key: 'plan_synthese', field: "Img_planD'action" },
                     { key: 'plan_requetes', field: 'Img_Requetes_cles' },
                     { key: 'plan_donnees_img', field: 'Img_donnee image' },
-                    { key: 'plan_longueur', field: 'Img_longeur_page' },
+                    { key: 'plan_longueur', field: 'Img_longeur_page_plan' },
                     { key: 'gsc_sitemaps', field: 'Img_sitemap_declaré' },
                     { key: 'gsc_https', field: 'Img_https' },
                     { key: 'mrm_profondeur', field: 'Img_profondeur_clics' },
@@ -125,8 +139,8 @@ async function syncAirtableToDb(io, db) {
                         if (step && step.statut !== 'SUCCESS' && step.statut !== 'SUCCES') {
                             console.log(`[POLLER] Step ${mapping.key} mark as SUCCESS for ${existing.id} (found URL in Airtable)`);
                             await db.run(
-                                'UPDATE audit_steps SET statut = "SUCCESS", output_cloudinary_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                                [imageUrl, step.id]
+                                'UPDATE audit_steps SET statut = ?, output_cloudinary_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                                ['SUCCESS', imageUrl, step.id]
                             );
 
                             // Real-time update for this specific step
@@ -142,8 +156,11 @@ async function syncAirtableToDb(io, db) {
                 // We allow re-trigger even from "EN_COURS" because the user might have clicked "A faire" to restart a stuck job.
                 if (airtableStatus === 'A faire' && existing.statut_global !== 'EN_ATTENTE') {
                     console.log(`[POLLER] Re-triggering audit ${existing.id} from Airtable (Force Reset).`);
-                    await db.run('UPDATE audits SET statut_global = "EN_ATTENTE" WHERE id = ?', [existing.id]);
-                    await db.run('UPDATE audit_steps SET statut = "EN_ATTENTE", output_cloudinary_url = NULL, details = NULL WHERE audit_id = ?', [existing.id]);
+                    await db.run('UPDATE audits SET statut_global = ? WHERE id = ?', ['EN_ATTENTE', existing.id]);
+                    await db.run(
+                        'UPDATE audit_steps SET statut = ?, output_cloudinary_url = NULL, resultat = NULL WHERE audit_id = ?',
+                        ['EN_ATTENTE', existing.id]
+                    );
 
                     await auditQueue.add(`audit-${existing.id}`, { auditId: existing.id, userId: defaultUser.id }, {
                         attempts: 3,
@@ -160,7 +177,7 @@ async function syncAirtableToDb(io, db) {
             console.log(`[POLLER] Importing new audit from Airtable: ${siteName} (${airtableId})`);
 
             // If Airtable says it's already done, mark it as TERMINE locally
-            const initialLocalStatus = airtableStatus === 'fait' ? 'TERMINE' : 'EN_ATTENTE';
+            const initialLocalStatus = mapAirtableStatusToLocalStatus(airtableStatus);
 
             // 1. Create Local Audit
             await db.run(

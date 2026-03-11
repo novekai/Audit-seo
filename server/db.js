@@ -1,41 +1,78 @@
-import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
+import { Pool, types } from 'pg';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// PostgreSQL returns COUNT(*) as int8 by default.
+types.setTypeParser(types.builtins.INT8, (value) => parseInt(value, 10));
 
-export async function initDb() {
-  const dbPath = process.env.INTERNAL_DB_FILENAME || path.resolve(__dirname, '..', 'database.sqlite');
+function toPgPlaceholders(sql) {
+  let index = 0;
+  return sql.replace(/\?/g, () => `$${++index}`);
+}
 
-  // Ensure the directory exists (CRITICAL for Railway)
-  const dbDir = path.dirname(dbPath);
-  if (!fs.existsSync(dbDir)) {
-    console.log(`[DB] Creating directory: ${dbDir}`);
-    fs.mkdirSync(dbDir, { recursive: true });
+function createDbAdapter(pool) {
+  return {
+    async exec(sql) {
+      await pool.query(sql);
+    },
+
+    async run(sql, params = []) {
+      return pool.query(toPgPlaceholders(sql), params);
+    },
+
+    async get(sql, params = []) {
+      const result = await pool.query(toPgPlaceholders(sql), params);
+      return result.rows[0];
+    },
+
+    async all(sql, params = []) {
+      const result = await pool.query(toPgPlaceholders(sql), params);
+      return result.rows;
+    },
+
+    async close() {
+      await pool.end();
+    }
+  };
+}
+
+function createPool() {
+  const connectionString = process.env.DATABASE_URL;
+
+  if (!connectionString) {
+    throw new Error('DATABASE_URL is required. PostgreSQL is now the only supported database.');
   }
 
-  console.log(`[DB] Initializing database at: ${dbPath}`);
+  const isLocal =
+    connectionString.includes('localhost') ||
+    connectionString.includes('127.0.0.1');
 
-  const db = await open({
-    filename: dbPath,
-    driver: sqlite3.Database
+  return new Pool({
+    connectionString,
+    ssl: isLocal || process.env.PGSSLMODE === 'disable'
+      ? false
+      : { rejectUnauthorized: false }
   });
+}
+
+export async function initDb() {
+  const pool = createPool();
+  const db = createDbAdapter(pool);
+
+  await pool.query('SELECT 1');
+  console.log('[DB] PostgreSQL connection established');
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT UNIQUE,
-      password TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      password TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS audits (
       id TEXT PRIMARY KEY,
-      user_id TEXT,
+      user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
       nom_site TEXT,
       url_site TEXT,
       sheet_audit_url TEXT,
@@ -43,16 +80,15 @@ export async function initDb() {
       mrm_report_url TEXT,
       airtable_record_id TEXT,
       statut_global TEXT DEFAULT 'EN_ATTENTE',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(user_id) REFERENCES users(id)
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS audit_steps (
       id TEXT PRIMARY KEY,
-      audit_id TEXT,
+      audit_id TEXT REFERENCES audits(id) ON DELETE CASCADE,
       step_key TEXT,
       statut TEXT DEFAULT 'EN_ATTENTE',
       attempts INTEGER DEFAULT 0,
@@ -60,36 +96,66 @@ export async function initDb() {
       resultat TEXT,
       output_cloudinary_url TEXT,
       output_value TEXT,
-      started_at DATETIME,
-      ended_at DATETIME,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(audit_id) REFERENCES audits(id)
+      started_at TIMESTAMPTZ,
+      ended_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS user_sessions (
       id TEXT PRIMARY KEY,
-      user_id TEXT,
+      user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
       service TEXT,
       encrypted_cookies TEXT,
-      expires_at DATETIME,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(user_id) REFERENCES users(id)
+      expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
 
-  // Migrations for existing DBs
-  try { await db.exec('ALTER TABLE audits ADD COLUMN updated_at DATETIME'); } catch (e) { }
-  try { await db.exec('ALTER TABLE audit_steps ADD COLUMN updated_at DATETIME'); } catch (e) { }
-  try { await db.exec('ALTER TABLE audit_steps ADD COLUMN resultat TEXT'); } catch (e) { }
+  await db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email
+    ON users(email)
+  `);
 
-  // Seed default user if none exists (for Airtable Poller)
-  const userCount = await db.get('SELECT COUNT(*) as count FROM users');
-  if (userCount.count === 0) {
+  await db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_audits_user_created_at
+    ON audits(user_id, created_at DESC)
+  `);
+
+  await db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_steps_audit_step_key
+    ON audit_steps(audit_id, step_key)
+  `);
+
+  await db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_user_sessions_user_service_created_at
+    ON user_sessions(user_id, service, created_at DESC)
+  `);
+
+  await db.exec(`
+    ALTER TABLE audits
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+  `);
+
+  await db.exec(`
+    ALTER TABLE audit_steps
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+  `);
+
+  await db.exec(`
+    ALTER TABLE audit_steps
+    ADD COLUMN IF NOT EXISTS resultat TEXT
+  `);
+
+  const userCount = await db.get('SELECT COUNT(*) AS count FROM users');
+  if (Number(userCount?.count || 0) === 0) {
     console.log('[DB] Seeding default admin user for Airtable integration...');
     const { v4: uuidv4 } = await import('uuid');
-    await db.run('INSERT INTO users (id, email, password) VALUES (?, ?, ?)', [uuidv4(), 'admin@novek.ai', '']);
+    await db.run(
+      'INSERT INTO users (id, email, password) VALUES (?, ?, ?)',
+      [uuidv4(), 'admin@novek.ai', '']
+    );
   }
 
   return db;
