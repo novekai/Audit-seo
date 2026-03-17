@@ -456,7 +456,7 @@ export const initWorker = (io, db) => {
                     if (gscPerfRes.capture1) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel1', gscPerfRes.capture1);
                     if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel2', gscPerfRes.capture2);
                     if (gscPerfRes.clics) await updateAirtableField(audit.airtable_record_id, 'nombres de clics trafic actuel', gscPerfRes.clics);
-                    if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_donnee brute gcs', gscPerfRes.capture2);
+                    if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_donnee_brute_gcs', gscPerfRes.capture2);
                 }
 
                 // STEP 16: GSC Coverage (Pages Indexed)
@@ -472,7 +472,7 @@ export const initWorker = (io, db) => {
                 await updateStep('gsc_top_pages', 'EN_COURS');
                 const gscTopRes = await captureGscTopPages(siteUrl, auditId, googleCookies);
                 await updateStep('gsc_top_pages', gscTopRes.statut, gscTopRes.details, gscTopRes.capture);
-                if (audit.airtable_record_id && gscTopRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_meilleure page', gscTopRes.capture);
+                if (audit.airtable_record_id && gscTopRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_meilleure_page', gscTopRes.capture);
             } else {
                 for (const k of ['gsc_performance', 'gsc_coverage', 'gsc_top_pages']) {
                     await updateStep(k, 'SKIP', 'Session Google non connectée');
