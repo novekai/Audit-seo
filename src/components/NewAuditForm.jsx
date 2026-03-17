@@ -1,14 +1,24 @@
 import React, { useState } from 'react';
 import { Send, Globe, FileSpreadsheet, FileBarChart } from 'lucide-react';
 
+const DEFAULT_AUDIT_SHEET_URL =
+    import.meta.env.VITE_DEFAULT_AUDIT_SHEET_URL ||
+    'https://docs.google.com/spreadsheets/d/119SxL31wtYHjkeNLH28mGHuy4-lkp91SKHHbxyrYJHk/edit?gid=941263829#gid=941263829';
+
+const DEFAULT_ACTION_PLAN_SHEET_URL =
+    import.meta.env.VITE_DEFAULT_ACTION_PLAN_SHEET_URL ||
+    'https://docs.google.com/spreadsheets/d/1dW7DK86dxmlJjCPPTdX_i8kbdA6hctt8OhupwLMmQ5k/edit?gid=1094454912#gid=1094454912';
+
+const createInitialFormData = () => ({
+    siteName: '',
+    siteUrl: '',
+    auditSheetUrl: DEFAULT_AUDIT_SHEET_URL,
+    actionPlanSheetUrl: DEFAULT_ACTION_PLAN_SHEET_URL,
+    mrmReportUrl: ''
+});
+
 const NewAuditForm = ({ onAuditSuccess }) => {
-    const [formData, setFormData] = useState({
-        siteName: '',
-        siteUrl: '',
-        auditSheetUrl: '',
-        actionPlanSheetUrl: '',
-        mrmReportUrl: ''
-    });
+    const [formData, setFormData] = useState(createInitialFormData);
 
     const [loading, setLoading] = useState(false);
 
@@ -32,13 +42,7 @@ const NewAuditForm = ({ onAuditSuccess }) => {
                 if (onAuditSuccess) {
                     onAuditSuccess();
                 }
-                setFormData({
-                    siteName: '',
-                    siteUrl: '',
-                    auditSheetUrl: '',
-                    actionPlanSheetUrl: '',
-                    mrmReportUrl: ''
-                });
+                setFormData(createInitialFormData());
             } else {
                 alert(data.error || 'Erreur lors du lancement');
             }
