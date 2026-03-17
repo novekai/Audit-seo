@@ -410,7 +410,7 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
         const steps = [
             // Phase 1: Public captures (no auth)
             'robots_txt', 'sitemap', 'logo',
-            'ami_responsive', 'ssl_labs',
+            'ami_responsive', 'responsive_menu_mobile_1', 'responsive_menu_mobile_2', 'ssl_labs',
             'psi_mobile', 'psi_desktop',
             // Phase 2: Google Sheets — Audit
             'sheet_images', 'sheet_meme_title', 'sheet_meta_desc_double',
@@ -428,7 +428,8 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
             'semrush_authority', 'ahrefs_authority',
             // Phase 7: Additional checks
             'check_404',
-            'gsc_performance', 'gsc_coverage', 'gsc_top_pages',
+            'gsc_performance', 'gsc_meilleure_requete', 'gsc_query_page_clicks_impressions',
+            'gsc_coverage', 'gsc_indexation_image', 'gsc_problemes_indexation', 'gsc_top_pages',
             'majestic_backlinks'
         ];
 
