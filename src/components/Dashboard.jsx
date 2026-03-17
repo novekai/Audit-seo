@@ -161,7 +161,7 @@ const Layout = ({ user, onLogout }) => {
                     <div className="glass rounded-3xl p-4 lg:p-8 border border-slate-200/80 relative overflow-hidden min-h-[calc(100vh-12rem)]">
                         {activeTab === 'new-audit' && <NewAuditForm onAuditSuccess={() => handleTabChange('progression')} />}
                         {activeTab === 'slides' && <Slides />}
-                        {activeTab === 'progression' && <Progression />}
+                        {activeTab === 'progression' && <Progression onOpenSlides={() => handleTabChange('slides')} />}
                         {activeTab === 'settings' && <Settings />}
                     </div>
                 </section>
