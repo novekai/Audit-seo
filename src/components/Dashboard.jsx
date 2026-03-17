@@ -29,8 +29,8 @@ const Layout = ({ user, onLogout }) => {
 
     const menuItems = [
         { id: 'new-audit', label: 'Nouvel audit', icon: FilePlus2 },
-        { id: 'slides', label: 'Slides', icon: PlaySquare },
         { id: 'progression', label: 'Progression', icon: BarChart3 },
+        { id: 'slides', label: 'Slides', icon: PlaySquare },
         { id: 'settings', label: 'Paramètres', icon: SettingsIcon },
     ];
 
