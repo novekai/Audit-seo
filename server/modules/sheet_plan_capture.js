@@ -10,6 +10,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { uploadToCloudinary } from '../utils/cloudinary.js';
 import { analyzeImage } from '../utils/openai.js';
+import { sanitizeCookies } from '../utils/cookies.js';
 
 // ── CSS to hide Google Sheets UI chrome ──────────────────────────────────────
 const SHEETS_HIDE_CSS = `
@@ -159,7 +160,10 @@ async function openSheet(sheetUrl, googleCookies) {
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         locale: 'fr-FR'
     });
-    if (googleCookies && googleCookies.length) await context.addCookies(googleCookies);
+    if (googleCookies && googleCookies.length) {
+        const cleanCookies = sanitizeCookies(googleCookies);
+        await context.addCookies(cleanCookies);
+    }
     const page = await context.newPage();
     page.setDefaultTimeout(90000);
     await page.goto(sheetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });

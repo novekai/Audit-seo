@@ -92,6 +92,14 @@ async function clickFirstVisible(page, selectors) {
     return false;
 }
 
+async function gotoGscPage(page, url, label) {
+    console.log(`[GSC] Navigating to ${label}: ${url}`);
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {
+        console.warn(`[GSC] ${label}: networkidle non atteint, poursuite avec le DOM actuel.`);
+    });
+}
+
 /**
  * ── HELPER: Resolve Property ID ──────────────────────────────────────────────
  * Detects if the property is URL-prefix (https://domain/) or Domain (sc-domain:domain).
@@ -243,8 +251,7 @@ export async function captureGscPerformance(siteUrl, auditId, googleCookies) {
 
         // GSC Performance page
         const gscUrl = `https://search.google.com/search-console/performance/search-analytics?resource_id=${encodeURIComponent(propertyId)}`;
-        console.log(`[GSC] Navigating to Performance: ${gscUrl}`);
-        await page.goto(gscUrl, { waitUntil: 'networkidle', timeout: 60000 });
+        await gotoGscPage(page, gscUrl, 'Performance');
 
         if (page.url().includes('accounts.google.com')) {
             result.statut = 'SKIP';
@@ -352,8 +359,7 @@ export async function captureGscCoverage(siteUrl, auditId, googleCookies) {
         const propertyId = await resolvePropertyId(page, domain);
 
         const gscUrl = `https://search.google.com/search-console/index?resource_id=${encodeURIComponent(propertyId)}`;
-        console.log(`[GSC] Navigating to Coverage (Index): ${gscUrl}`);
-        await page.goto(gscUrl, { waitUntil: 'networkidle', timeout: 60000 });
+        await gotoGscPage(page, gscUrl, 'Coverage (Index)');
 
         if (page.url().includes('accounts.google.com')) {
             result.statut = 'SKIP';
@@ -443,8 +449,7 @@ export async function captureGscTopPages(siteUrl, auditId, googleCookies) {
 
         // Performance page sorted by pages tab
         const gscUrl = `https://search.google.com/search-console/performance/search-analytics?resource_id=${encodeURIComponent(propertyId)}&breakdown=page`;
-        console.log(`[GSC] Navigating to Top Pages: ${gscUrl}`);
-        await page.goto(gscUrl, { waitUntil: 'networkidle', timeout: 60000 });
+        await gotoGscPage(page, gscUrl, 'Top Pages');
 
         if (page.url().includes('accounts.google.com')) {
             result.statut = 'SKIP';

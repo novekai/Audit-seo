@@ -5,7 +5,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { uploadToCloudinary } from '../utils/cloudinary.js';
 import { analyzeImage } from '../utils/openai.js';
-import { decrypt } from '../utils/encrypt.js';
+import { sanitizeCookies } from '../utils/cookies.js';
 
 async function cropWithAI(imagePath, prompt) {
     try {
@@ -45,7 +45,7 @@ export async function captureUbersuggest(siteUrl, auditId, cookies) {
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         locale: 'fr-FR'
     });
-    await context.addCookies(cookies);
+    await context.addCookies(sanitizeCookies(cookies));
     const page = await context.newPage();
     page.setDefaultTimeout(90000);
 

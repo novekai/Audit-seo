@@ -121,7 +121,7 @@ export async function auditRobotsSitemap(url, auditId) {
         // --- STAGE 2: Sitemap Navigation & Capture ---
         if (!robotsResult.sitemap.url) {
             console.log("[MODULE-ROBOTS] Pas de sitemap direct. Test des fallbacks...");
-            const fallbacks = [`${url}/sitemap.xml`, `${url}/sitemap_index.xml`];
+            const fallbacks = [`${url}/sitemap.xml`, `${url}/sitemap_index.xml`, `${url}/wp-sitemap.xml`];
             for (const fb of fallbacks) {
                 try {
                     const res = await page.goto(fb, { timeout: 10000 });
