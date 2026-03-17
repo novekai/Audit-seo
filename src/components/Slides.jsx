@@ -124,9 +124,8 @@ function Slides() {
                 <div>
                     <h3 className="text-xl font-semibold text-slate-900 mb-2">Génération des Google Slides</h3>
                     <p className="text-sm text-slate-600 max-w-3xl">
-                        Lancez la création ou la mise à jour du deck depuis ici. Le webhook reçoit le{' '}
-                        <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700">RECORD_ID</code>{' '}
-                        Airtable de l’audit, puis le lien Google Slides renvoyé est enregistré et affiché.
+                        Lancez la création ou la mise à jour du deck depuis ici.
+                        Le lien Google Slides sera disponible une fois la génération terminée, ce qui peut prendre quelques minutes.
                     </p>
                 </div>
 
