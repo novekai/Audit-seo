@@ -50,6 +50,48 @@ async function launchWithCookies(cookies) {
     return { browser, context, page };
 }
 
+function getTmpDir() {
+    return process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
+}
+
+function cleanupFile(filePath) {
+    if (filePath && fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+    }
+}
+
+async function captureSection(page, { tmpPrefix, uploadFolder, prompt, fullPage = false }) {
+    const tmpPath = path.join(getTmpDir(), `${tmpPrefix}_${uuidv4()}.png`);
+    let croppedPath = tmpPath;
+
+    try {
+        await page.screenshot({ path: tmpPath, fullPage });
+        croppedPath = await cropWithAI(tmpPath, prompt);
+        return await uploadToCloudinary(croppedPath, uploadFolder);
+    } finally {
+        cleanupFile(croppedPath);
+        if (croppedPath !== tmpPath) {
+            cleanupFile(tmpPath);
+        }
+    }
+}
+
+async function clickFirstVisible(page, selectors) {
+    for (const selector of selectors) {
+        try {
+            const locator = page.locator(selector).first();
+            if (await locator.count() === 0) continue;
+            if (!await locator.isVisible()) continue;
+            await locator.click({ timeout: 5000 });
+            return true;
+        } catch {
+            // Continue with the next selector candidate.
+        }
+    }
+
+    return false;
+}
+
 /**
  * ── HELPER: Resolve Property ID ──────────────────────────────────────────────
  * Detects if the property is URL-prefix (https://domain/) or Domain (sc-domain:domain).
@@ -185,7 +227,15 @@ CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
 
 // ── GOOGLE SEARCH CONSOLE — PERFORMANCE (Traffic) ────────────────────────────
 export async function captureGscPerformance(siteUrl, auditId, googleCookies) {
-    const result = { statut: 'ERROR', capture1: null, capture2: null, clics: null, pagesIndexed: null };
+    const result = {
+        statut: 'ERROR',
+        capture1: null,
+        capture2: null,
+        clics: null,
+        pagesIndexed: null,
+        bestQueryCapture: null,
+        queryPageClicksImpressionsCapture: null
+    };
     const { browser, page } = await launchWithCookies(googleCookies);
     try {
         const domain = new URL(siteUrl).hostname;
@@ -230,38 +280,54 @@ export async function captureGscPerformance(siteUrl, auditId, googleCookies) {
         console.log(`[GSC] Performance metrics:`, JSON.stringify(metrics));
 
         // Screenshot 1: Full performance graph
-        const tmpDir = process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
-        const tmpPath1 = path.join(tmpDir, `temp_gsc_perf1_${uuidv4()}.png`);
-        await page.screenshot({ path: tmpPath1, fullPage: false });
-
         const prompt1 = `Cette image est Google Search Console, page Performance.
 Rogne pour ne garder que le graphe de performance (courbe des clics/impressions) et les métriques résumées en haut.
 Supprime le menu latéral GSC et tout le texte sous le graphe.
 CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
 
-        const cropped1 = await cropWithAI(tmpPath1, prompt1);
-        const up1 = await uploadToCloudinary(cropped1, `audit-results/gsc-perf1-${auditId}`);
-        if (fs.existsSync(cropped1)) fs.unlinkSync(cropped1);
-        if (fs.existsSync(tmpPath1) && tmpPath1 !== cropped1) fs.unlinkSync(tmpPath1);
-        result.capture1 = up1?.secure_url || up1?.url || up1;
+        result.capture1 = await captureSection(page, {
+            tmpPrefix: 'temp_gsc_perf1',
+            uploadFolder: `audit-results/gsc-perf1-${auditId}`,
+            prompt: prompt1
+        });
+
+        await clickFirstVisible(page, [
+            '[role="tab"]:has-text("Requêtes")',
+            '[role="tab"]:has-text("Queries")',
+            'text=Requêtes',
+            'text=Queries'
+        ]);
 
         // Scroll down for the table
         await page.evaluate(() => window.scrollBy(0, 600));
         await page.waitForTimeout(2000);
-
-        const tmpPath2 = path.join(tmpDir, `temp_gsc_perf2_${uuidv4()}.png`);
-        await page.screenshot({ path: tmpPath2, fullPage: false });
 
         const prompt2 = `Cette image montre le tableau de données de Google Search Console.
 Rogne pour ne garder que le tableau des requêtes/pages (les lignes de données avec clics et impressions).
 Supprime le graphe, le menu latéral, et les filtres.
 CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
 
-        const cropped2 = await cropWithAI(tmpPath2, prompt2);
-        const up2 = await uploadToCloudinary(cropped2, `audit-results/gsc-perf2-${auditId}`);
-        if (fs.existsSync(cropped2)) fs.unlinkSync(cropped2);
-        if (fs.existsSync(tmpPath2) && tmpPath2 !== cropped2) fs.unlinkSync(tmpPath2);
-        result.capture2 = up2?.secure_url || up2?.url || up2;
+        result.capture2 = await captureSection(page, {
+            tmpPrefix: 'temp_gsc_perf2',
+            uploadFolder: `audit-results/gsc-perf2-${auditId}`,
+            prompt: prompt2
+        });
+        result.queryPageClicksImpressionsCapture = result.capture2;
+
+        const promptBestQuery = `Cette image montre le tableau des requêtes dans Google Search Console.
+Rogne pour ne garder que l'entête du tableau et la toute premiere ligne correspondant a la meilleure requête.
+Supprime le graphe, le menu lateral, les filtres, et les lignes inutiles en dessous.
+CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
+
+        try {
+            result.bestQueryCapture = await captureSection(page, {
+                tmpPrefix: 'temp_gsc_best_query',
+                uploadFolder: `audit-results/gsc-best-query-${auditId}`,
+                prompt: promptBestQuery
+            });
+        } catch (e) {
+            console.warn(`[GSC] Best query capture failed: ${e.message}`);
+        }
 
         result.statut = 'SUCCESS';
     } catch (e) {
@@ -273,7 +339,13 @@ CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
 
 // ── GOOGLE SEARCH CONSOLE — COVERAGE (Pages Indexed) ────────────────────────
 export async function captureGscCoverage(siteUrl, auditId, googleCookies) {
-    const result = { statut: 'ERROR', capture: null, pagesIndexed: null };
+    const result = {
+        statut: 'ERROR',
+        capture: null,
+        pagesIndexed: null,
+        indexationCapture: null,
+        problemCapture: null
+    };
     const { browser, page } = await launchWithCookies(googleCookies);
     try {
         const domain = new URL(siteUrl).hostname;
@@ -317,21 +389,42 @@ export async function captureGscCoverage(siteUrl, auditId, googleCookies) {
         if (indexed) result.pagesIndexed = indexed;
         console.log(`[GSC] Pages indexed: ${indexed || 'N/A'}`);
 
-        const tmpDir = process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
-        const tmpPath = path.join(tmpDir, `temp_gsc_coverage_${uuidv4()}.png`);
-        await page.screenshot({ path: tmpPath, fullPage: false });
-
         const prompt = `Cette image montre Google Search Console, page Couverture/Index.
 Rogne pour ne garder que le graphe de couverture (barres vertes/rouges montrant les pages indexées) et les chiffres résumés.
 Supprime le menu latéral GSC et les détails sous le graphe.
 CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
 
-        const croppedPath = await cropWithAI(tmpPath, prompt);
-        const uploaded = await uploadToCloudinary(croppedPath, `audit-results/gsc-coverage-${auditId}`);
-        if (fs.existsSync(croppedPath)) fs.unlinkSync(croppedPath);
-        if (fs.existsSync(tmpPath) && tmpPath !== croppedPath) fs.unlinkSync(tmpPath);
+        result.capture = await captureSection(page, {
+            tmpPrefix: 'temp_gsc_coverage',
+            uploadFolder: `audit-results/gsc-coverage-${auditId}`,
+            prompt
+        });
+        result.indexationCapture = result.capture;
 
-        result.capture = uploaded?.secure_url || uploaded?.url || uploaded;
+        await page.evaluate(() => window.scrollBy(0, 900));
+        await page.waitForTimeout(2500);
+        await clickFirstVisible(page, [
+            'text=Pourquoi les pages ne sont pas indexées',
+            'text=Pages non indexées',
+            `text=Why pages aren't indexed`
+        ]);
+        await page.waitForTimeout(2000);
+
+        const problemPrompt = `Cette image montre Google Search Console, section d'explication de non-indexation.
+Rogne pour ne garder que le tableau ou la liste des motifs expliquant pourquoi des pages ne sont pas indexées.
+Conserve les colonnes utiles comme le motif, la source ou le nombre de pages, et supprime le menu lateral.
+CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
+
+        try {
+            result.problemCapture = await captureSection(page, {
+                tmpPrefix: 'temp_gsc_coverage_problems',
+                uploadFolder: `audit-results/gsc-coverage-problems-${auditId}`,
+                prompt: problemPrompt
+            });
+        } catch (e) {
+            console.warn(`[GSC] Coverage problems capture failed: ${e.message}`);
+        }
+
         result.statut = 'SUCCESS';
     } catch (e) {
         result.details = e.message;

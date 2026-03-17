@@ -1,8 +1,115 @@
-import { chromium } from 'playwright';
+import { chromium, devices } from 'playwright';
 import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { uploadToCloudinary } from '../utils/cloudinary.js';
+
+const MOBILE_DEVICE = devices['iPhone 13'];
+
+function getTmpDir() {
+    return process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
+}
+
+function cleanupFile(filePath) {
+    if (filePath && fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+    }
+}
+
+async function uploadScreenshot(filePath, folder) {
+    return await uploadToCloudinary(filePath, folder);
+}
+
+async function dismissCookieBanners(page) {
+    for (const txt of ['Accept', 'OK', 'Tout accepter', 'I agree', 'Accept all', 'Accepter']) {
+        try {
+            const btn = page.locator(`button:has-text("${txt}")`).first();
+            if (await btn.count() > 0 && await btn.isVisible()) {
+                await btn.click();
+                await page.waitForTimeout(500);
+                return;
+            }
+        } catch {
+            // Continue with the next candidate.
+        }
+    }
+}
+
+async function clickFirstVisible(page, selectors) {
+    for (const selector of selectors) {
+        try {
+            const locator = page.locator(selector).first();
+            if (await locator.count() === 0) continue;
+            if (!await locator.isVisible()) continue;
+            await locator.click({ timeout: 5000 });
+            return true;
+        } catch {
+            // Continue with the next selector candidate.
+        }
+    }
+
+    return false;
+}
+
+async function captureMobileSite(browser, url, auditId) {
+    const context = await browser.newContext({
+        ...MOBILE_DEVICE,
+        locale: 'fr-FR',
+        ignoreHTTPSErrors: true
+    });
+    const page = await context.newPage();
+
+    let capture1 = null;
+    let capture2 = null;
+
+    try {
+        console.log('[MODULE-RESPONSIVE] Capture mobile dédiée...');
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => { });
+        await dismissCookieBanners(page);
+        await page.waitForTimeout(2500);
+
+        const screenshotPath1 = path.join(getTmpDir(), `temp_responsive_mobile_1_${uuidv4()}.png`);
+        const screenshotPath2 = path.join(getTmpDir(), `temp_responsive_mobile_2_${uuidv4()}.png`);
+
+        try {
+            await page.screenshot({ path: screenshotPath1, fullPage: false });
+            capture1 = await uploadScreenshot(screenshotPath1, `audit-results/responsive-mobile-1-${auditId}`);
+
+            const menuOpened = await clickFirstVisible(page, [
+                'button[aria-label*="menu" i]',
+                '[role="button"][aria-label*="menu" i]',
+                'button[aria-controls*="menu" i]',
+                'button[class*="menu"]',
+                'button[class*="Menu"]',
+                'button[class*="burger"]',
+                'button[class*="hamb"]',
+                '.menu-toggle',
+                '.navbar-toggler',
+                'button:has-text("Menu")',
+                'a:has-text("Menu")',
+                'summary'
+            ]);
+
+            await page.waitForTimeout(menuOpened ? 1800 : 1200);
+
+            if (!menuOpened) {
+                await page.evaluate(() => window.scrollBy(0, Math.max(window.innerHeight * 0.75, 450)));
+                await page.waitForTimeout(800);
+            }
+
+            await page.screenshot({ path: screenshotPath2, fullPage: false });
+            capture2 = await uploadScreenshot(screenshotPath2, `audit-results/responsive-mobile-2-${auditId}`);
+        } finally {
+            cleanupFile(screenshotPath1);
+            cleanupFile(screenshotPath2);
+        }
+    } finally {
+        await context.close();
+    }
+
+    return { capture1, capture2 };
+}
 
 /**
  * Audit Responsive Design via AmIResponsive
@@ -25,7 +132,9 @@ export async function auditResponsive(url, auditId) {
     let result = {
         statut: 'FAILED',
         capture: null,
-        is_responsive: false
+        is_responsive: false,
+        menu_capture_1: null,
+        menu_capture_2: null
     };
 
     try {
@@ -64,17 +173,7 @@ export async function auditResponsive(url, auditId) {
             console.log('[MODULE-RESPONSIVE] Devices container found.');
         } catch { }
 
-        // Dismiss cookie banners
-        for (const txt of ['Accept', 'OK', 'Tout accepter', 'I agree', 'Accept all', 'Accepter']) {
-            try {
-                const btn = page.locator(`button:has-text("${txt}")`).first();
-                if (await btn.count() > 0 && await btn.isVisible()) {
-                    await btn.click();
-                    await page.waitForTimeout(500);
-                    break;
-                }
-            } catch { }
-        }
+        await dismissCookieBanners(page);
 
         // CRITICAL: Wait for iframes to actually load the site content
         console.log('[MODULE-RESPONSIVE] Attente du chargement DOM réel dans les iframes...');
@@ -106,8 +205,7 @@ export async function auditResponsive(url, auditId) {
         await page.waitForTimeout(8000);
 
         // Take screenshot — capture only the devices area if possible
-        const tmpDir = process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
-        const screenshotPath = path.join(tmpDir, `temp_responsive_${uuidv4()}.png`);
+        const screenshotPath = path.join(getTmpDir(), `temp_responsive_${uuidv4()}.png`);
 
         // Try to screenshot just the device frames area
         const devicesElement = await page.$('.FrameContainer, .devices, [class*="frame-container"]');
@@ -121,14 +219,21 @@ export async function auditResponsive(url, auditId) {
         }
 
         console.log('[MODULE-RESPONSIVE] Uploading to Cloudinary...');
-        const cloudRes = await uploadToCloudinary(screenshotPath, `audit-results/responsive-${auditId}`);
+        const cloudRes = await uploadScreenshot(screenshotPath, `audit-results/responsive-${auditId}`);
 
         result.capture = cloudRes;
         result.statut = 'SUCCESS';
         result.is_responsive = true;
 
-        // Cleanup
-        if (fs.existsSync(screenshotPath)) fs.unlinkSync(screenshotPath);
+        const mobileCaptures = await captureMobileSite(browser, url, auditId).catch((err) => {
+            console.warn(`[MODULE-RESPONSIVE] Mobile captures failed: ${err.message}`);
+            return { capture1: null, capture2: null };
+        });
+
+        result.menu_capture_1 = mobileCaptures.capture1;
+        result.menu_capture_2 = mobileCaptures.capture2;
+
+        cleanupFile(screenshotPath);
 
     } catch (e) {
         console.error('[MODULE-RESPONSIVE] FATAL:', e.message);
