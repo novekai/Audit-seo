@@ -15,6 +15,7 @@ import { check404 } from '../modules/check_404.js';
 import { captureMajesticBacklinks } from '../modules/majestic.js';
 import { updateAirtableStatut, updateAirtableField } from '../airtable.js';
 import { decrypt } from '../utils/encrypt.js';
+import { v4 as uuidv4 } from 'uuid';
 
 const REDIS_URL = process.env.REDIS_URL;
 const finalRedisUrl = REDIS_URL || 'redis://localhost:6379';
@@ -72,10 +73,18 @@ export const initWorker = (io, db) => {
 
             // Helper to update step status
             const updateStep = async (stepKey, status, result = null, cloudinaryUrl = null) => {
-                await db.run(
+                const serializedResult = result ? JSON.stringify(result) : null;
+                const updateResult = await db.run(
                     'UPDATE audit_steps SET statut = ?, resultat = ?, output_cloudinary_url = ?, updated_at = CURRENT_TIMESTAMP WHERE audit_id = ? AND step_key = ?',
-                    [status, result ? JSON.stringify(result) : null, cloudinaryUrl, auditId, stepKey]
+                    [status, serializedResult, cloudinaryUrl, auditId, stepKey]
                 );
+
+                if ((updateResult.rowCount || 0) === 0) {
+                    await db.run(
+                        'INSERT INTO audit_steps (id, audit_id, step_key, statut, resultat, output_cloudinary_url) VALUES (?, ?, ?, ?, ?, ?)',
+                        [uuidv4(), auditId, stepKey, status, serializedResult, cloudinaryUrl]
+                    );
+                }
 
                 // Fetch the updated step to emit to client
                 const updatedStep = await db.get('SELECT * FROM audit_steps WHERE audit_id = ? AND step_key = ?', [auditId, stepKey]);
@@ -97,6 +106,26 @@ export const initWorker = (io, db) => {
                 } finally {
                     clearTimeout(timeoutId);
                 }
+            };
+
+            const buildDerivedCaptureStep = (captureUrl, parentStatus, parentDetails, missingDetails) => {
+                if (captureUrl) {
+                    return { status: 'SUCCESS', details: null, outputUrl: captureUrl };
+                }
+
+                if (String(parentStatus || '').toUpperCase() === 'SKIP') {
+                    return {
+                        status: 'SKIP',
+                        details: parentDetails || missingDetails,
+                        outputUrl: null
+                    };
+                }
+
+                return {
+                    status: 'FAILED',
+                    details: parentDetails || missingDetails,
+                    outputUrl: null
+                };
             };
 
             // Check if audit was cancelled or finished prematurely
@@ -257,14 +286,42 @@ export const initWorker = (io, db) => {
             try {
                 console.log(`[WORKER] [JOB ${job.id}] Executing Step: Responsive Check...`);
                 await updateStep('ami_responsive', 'EN_COURS');
+                await updateStep('responsive_menu_mobile_1', 'EN_COURS');
+                await updateStep('responsive_menu_mobile_2', 'EN_COURS');
                 const respResult = await runWithTimeout(auditResponsive(siteUrl, auditId), 180000, 'Responsive'); // 3m
                 await updateStep('ami_responsive', respResult.statut, null, respResult.capture);
-                if (audit.airtable_record_id && respResult.capture) {
-                    await updateAirtableField(audit.airtable_record_id, 'Img_AmIResponsive', respResult.capture);
+                const mobileCapture1Step = buildDerivedCaptureStep(
+                    respResult.menu_capture_1,
+                    respResult.statut,
+                    null,
+                    'Capture mobile 1 non générée'
+                );
+                const mobileCapture2Step = buildDerivedCaptureStep(
+                    respResult.menu_capture_2,
+                    respResult.statut,
+                    null,
+                    'Capture mobile 2 non générée'
+                );
+
+                await updateStep('responsive_menu_mobile_1', mobileCapture1Step.status, mobileCapture1Step.details, mobileCapture1Step.outputUrl);
+                await updateStep('responsive_menu_mobile_2', mobileCapture2Step.status, mobileCapture2Step.details, mobileCapture2Step.outputUrl);
+
+                if (audit.airtable_record_id) {
+                    if (respResult.capture) {
+                        await updateAirtableField(audit.airtable_record_id, 'Img_AmIResponsive', respResult.capture);
+                    }
+                    if (respResult.menu_capture_1) {
+                        await updateAirtableField(audit.airtable_record_id, 'Img_menu_mobile_1', respResult.menu_capture_1);
+                    }
+                    if (respResult.menu_capture_2) {
+                        await updateAirtableField(audit.airtable_record_id, 'Img_menu_mobile_2', respResult.menu_capture_2);
+                    }
                 }
             } catch (e) {
                 console.error(`[WORKER] [JOB ${job.id}] Responsive Check failed:`, e.message);
                 await updateStep('ami_responsive', 'FAILED', e.message);
+                await updateStep('responsive_menu_mobile_1', 'FAILED', e.message);
+                await updateStep('responsive_menu_mobile_2', 'FAILED', e.message);
             }
 
             // STEP 6: PageSpeed Mobile
@@ -450,22 +507,58 @@ export const initWorker = (io, db) => {
             if (await checkCancellation()) return;
             if (googleCookies) {
                 await updateStep('gsc_performance', 'EN_COURS');
+                await updateStep('gsc_meilleure_requete', 'EN_COURS');
+                await updateStep('gsc_query_page_clicks_impressions', 'EN_COURS');
                 const gscPerfRes = await captureGscPerformance(siteUrl, auditId, googleCookies);
                 await updateStep('gsc_performance', gscPerfRes.statut, gscPerfRes.details, gscPerfRes.capture1);
+                const bestQueryStep = buildDerivedCaptureStep(
+                    gscPerfRes.bestQueryCapture,
+                    gscPerfRes.statut,
+                    gscPerfRes.details,
+                    'Capture de la meilleure requête non générée'
+                );
+                const queryTableStep = buildDerivedCaptureStep(
+                    gscPerfRes.queryPageClicksImpressionsCapture,
+                    gscPerfRes.statut,
+                    gscPerfRes.details,
+                    'Capture query/page/clicks/impressions non générée'
+                );
+                await updateStep('gsc_meilleure_requete', bestQueryStep.status, bestQueryStep.details, bestQueryStep.outputUrl);
+                await updateStep('gsc_query_page_clicks_impressions', queryTableStep.status, queryTableStep.details, queryTableStep.outputUrl);
                 if (audit.airtable_record_id) {
                     if (gscPerfRes.capture1) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel1', gscPerfRes.capture1);
                     if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel2', gscPerfRes.capture2);
                     if (gscPerfRes.clics) await updateAirtableField(audit.airtable_record_id, 'nombres de clics trafic actuel', gscPerfRes.clics);
                     if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_donnee_brute_gcs', gscPerfRes.capture2);
+                    if (gscPerfRes.bestQueryCapture) await updateAirtableField(audit.airtable_record_id, 'Img_meilleure_requete', gscPerfRes.bestQueryCapture);
+                    if (gscPerfRes.queryPageClicksImpressionsCapture) await updateAirtableField(audit.airtable_record_id, 'Img_query_page_clicks_impressions', gscPerfRes.queryPageClicksImpressionsCapture);
                 }
 
                 // STEP 16: GSC Coverage (Pages Indexed)
                 await updateStep('gsc_coverage', 'EN_COURS');
+                await updateStep('gsc_indexation_image', 'EN_COURS');
+                await updateStep('gsc_problemes_indexation', 'EN_COURS');
                 const gscCovRes = await captureGscCoverage(siteUrl, auditId, googleCookies);
                 await updateStep('gsc_coverage', gscCovRes.statut, gscCovRes.details, gscCovRes.capture);
+                const indexationStep = buildDerivedCaptureStep(
+                    gscCovRes.indexationCapture,
+                    gscCovRes.statut,
+                    gscCovRes.details,
+                    'Capture d’indexation GSC non générée'
+                );
+                const problemIndexationStep = buildDerivedCaptureStep(
+                    gscCovRes.problemCapture,
+                    gscCovRes.statut,
+                    gscCovRes.details,
+                    'Capture des problèmes d’indexation non générée'
+                );
+                await updateStep('gsc_indexation_image', indexationStep.status, indexationStep.details, indexationStep.outputUrl);
+                await updateStep('gsc_problemes_indexation', problemIndexationStep.status, problemIndexationStep.details, problemIndexationStep.outputUrl);
                 if (audit.airtable_record_id) {
                     if (gscCovRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_urls', gscCovRes.capture);
                     if (gscCovRes.pagesIndexed) await updateAirtableField(audit.airtable_record_id, 'nombres de pages indexé trafic actuel', gscCovRes.pagesIndexed);
+                    if (gscCovRes.indexationCapture) await updateAirtableField(audit.airtable_record_id, 'Img_indexation_gsc', gscCovRes.indexationCapture);
+                    if (gscCovRes.problemCapture) await updateAirtableField(audit.airtable_record_id, 'Img_probleme_indexation_gsc', gscCovRes.problemCapture);
                 }
 
                 // STEP 17: GSC Top Pages (Meilleures pages)
@@ -474,7 +567,15 @@ export const initWorker = (io, db) => {
                 await updateStep('gsc_top_pages', gscTopRes.statut, gscTopRes.details, gscTopRes.capture);
                 if (audit.airtable_record_id && gscTopRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_meilleure_page', gscTopRes.capture);
             } else {
-                for (const k of ['gsc_performance', 'gsc_coverage', 'gsc_top_pages']) {
+                for (const k of [
+                    'gsc_performance',
+                    'gsc_meilleure_requete',
+                    'gsc_query_page_clicks_impressions',
+                    'gsc_coverage',
+                    'gsc_indexation_image',
+                    'gsc_problemes_indexation',
+                    'gsc_top_pages'
+                ]) {
                     await updateStep(k, 'SKIP', 'Session Google non connectée');
                 }
             }

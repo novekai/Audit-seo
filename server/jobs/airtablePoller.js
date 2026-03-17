@@ -105,6 +105,8 @@ async function syncAirtableToDb(io, db) {
                     { key: 'logo', field: 'Img_Logo' },
                     { key: 'ssl_labs', field: 'Img_SSL' },
                     { key: 'ami_responsive', field: 'Img_AmIResponsive' },
+                    { key: 'responsive_menu_mobile_1', field: 'Img_menu_mobile_1' },
+                    { key: 'responsive_menu_mobile_2', field: 'Img_menu_mobile_2' },
                     { key: 'psi_mobile', field: 'Img_PSI_Mobile' },
                     { key: 'psi_desktop', field: 'Img_PSI_Desktop' },
                     { key: 'sheet_images', field: 'Img_Poids_image' },
@@ -126,16 +128,33 @@ async function syncAirtableToDb(io, db) {
                     { key: 'plan_longueur', field: 'Img_longeur_page_plan' },
                     { key: 'gsc_sitemaps', field: 'Img_sitemap_declaré' },
                     { key: 'gsc_https', field: 'Img_https' },
+                    { key: 'gsc_performance', field: 'Img_trafic actuel1' },
+                    { key: 'gsc_meilleure_requete', field: 'Img_meilleure_requete' },
+                    { key: 'gsc_query_page_clicks_impressions', field: 'Img_query_page_clicks_impressions' },
+                    { key: 'gsc_coverage', field: 'Img_indexation_gsc' },
+                    { key: 'gsc_indexation_image', field: 'Img_indexation_gsc' },
+                    { key: 'gsc_problemes_indexation', field: 'Img_probleme_indexation_gsc' },
+                    { key: 'gsc_top_pages', field: 'Img_meilleure_page' },
                     { key: 'mrm_profondeur', field: 'Img_profondeur_clics' },
                     { key: 'ubersuggest_da', field: 'Img_autorité_domaine_UBERSUGGEST' },
                     { key: 'semrush_authority', field: 'Img_autorité_domaine_SEMRUSH' },
                     { key: 'ahrefs_authority', field: 'Img_autorité_domaine_AHREF' },
+                    { key: 'majestic_backlinks', field: 'Img_BACKLINKS' },
                 ];
 
                 for (const mapping of stepMappings) {
                     const imageUrl = record.get(mapping.field);
+                    let step = await db.get('SELECT * FROM audit_steps WHERE audit_id = ? AND step_key = ?', [existing.id, mapping.key]);
+
+                    if (!step) {
+                        await db.run(
+                            'INSERT INTO audit_steps (id, audit_id, step_key, statut, output_cloudinary_url) VALUES (?, ?, ?, ?, ?)',
+                            [uuidv4(), existing.id, mapping.key, imageUrl ? 'SUCCESS' : 'EN_ATTENTE', imageUrl || null]
+                        );
+                        step = await db.get('SELECT * FROM audit_steps WHERE audit_id = ? AND step_key = ?', [existing.id, mapping.key]);
+                    }
+
                     if (imageUrl) {
-                        const step = await db.get('SELECT * FROM audit_steps WHERE audit_id = ? AND step_key = ?', [existing.id, mapping.key]);
                         if (step && step.statut !== 'SUCCESS' && step.statut !== 'SUCCES') {
                             console.log(`[POLLER] Step ${mapping.key} mark as SUCCESS for ${existing.id} (found URL in Airtable)`);
                             await db.run(
@@ -198,7 +217,7 @@ async function syncAirtableToDb(io, db) {
             // 2. Initialize Steps — must match worker.js step_keys exactly
             const stepsKeys = [
                 'robots_txt', 'sitemap', 'logo',
-                'ami_responsive', 'ssl_labs',
+                'ami_responsive', 'responsive_menu_mobile_1', 'responsive_menu_mobile_2', 'ssl_labs',
                 'psi_mobile', 'psi_desktop',
                 'sheet_images', 'sheet_meme_title', 'sheet_meta_desc_double',
                 'sheet_doublons_h1', 'sheet_h1_absente', 'sheet_h1_vides',
@@ -206,7 +225,9 @@ async function syncAirtableToDb(io, db) {
                 'sheet_hn_longue', 'sheet_mots_body', 'sheet_meta_desc',
                 'sheet_balise_title', 'check_404',
                 'plan_synthese', 'plan_requetes', 'plan_donnees_img', 'plan_longueur',
-                'gsc_sitemaps', 'gsc_https', 'gsc_performance', 'gsc_coverage', 'gsc_top_pages',
+                'gsc_sitemaps', 'gsc_https',
+                'gsc_performance', 'gsc_meilleure_requete', 'gsc_query_page_clicks_impressions',
+                'gsc_coverage', 'gsc_indexation_image', 'gsc_problemes_indexation', 'gsc_top_pages',
                 'mrm_profondeur', 'ubersuggest_da',
                 'semrush_authority', 'ahrefs_authority', 'majestic_backlinks'
             ];
