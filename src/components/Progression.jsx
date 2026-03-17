@@ -74,10 +74,20 @@ const Progression = () => {
         });
 
         socket.on('audit:update', (updatedAudit) => {
-            setAudits(prev => prev.map(a => a.id === updatedAudit.id ? updatedAudit : a));
-            if (activeAudit?.id === updatedAudit.id) {
-                setActiveAudit(updatedAudit);
-            }
+            setAudits(prev => {
+                const exists = prev.some(a => a.id === updatedAudit.id);
+                if (!exists) return [updatedAudit, ...prev];
+                return prev.map(a => a.id === updatedAudit.id ? { ...a, ...updatedAudit } : a);
+            });
+
+            setActiveAudit(prev => {
+                if (prev?.id !== updatedAudit.id) return prev;
+                return {
+                    ...prev,
+                    ...updatedAudit,
+                    steps: updatedAudit.steps || prev.steps
+                };
+            });
         });
 
         socket.on('step:update', ({ auditId, step }) => {

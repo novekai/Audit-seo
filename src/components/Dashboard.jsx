@@ -14,6 +14,7 @@ import {
 import NewAuditForm from './NewAuditForm';
 import Settings from './Settings';
 import Progression from './Progression';
+import Slides from './Slides';
 
 const Layout = ({ user, onLogout }) => {
     const [activeTab, setActiveTab] = useState(() => {
@@ -159,7 +160,7 @@ const Layout = ({ user, onLogout }) => {
 
                     <div className="glass rounded-3xl p-4 lg:p-8 border border-slate-200/80 relative overflow-hidden min-h-[calc(100vh-12rem)]">
                         {activeTab === 'new-audit' && <NewAuditForm onAuditSuccess={() => handleTabChange('progression')} />}
-                        {activeTab === 'slides' && <div className="py-20 text-center text-slate-500 italic">Section Slides en cours de développement...</div>}
+                        {activeTab === 'slides' && <Slides />}
                         {activeTab === 'progression' && <Progression />}
                         {activeTab === 'settings' && <Settings />}
                     </div>

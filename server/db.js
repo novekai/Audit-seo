@@ -79,6 +79,10 @@ export async function initDb() {
       sheet_plan_url TEXT,
       mrm_report_url TEXT,
       airtable_record_id TEXT,
+      google_slides_url TEXT,
+      slides_generation_status TEXT DEFAULT 'NON_GENERE',
+      slides_generation_error TEXT,
+      slides_generated_at TIMESTAMPTZ,
       statut_global TEXT DEFAULT 'EN_ATTENTE',
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -136,6 +140,32 @@ export async function initDb() {
   await db.exec(`
     ALTER TABLE audits
     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+  `);
+
+  await db.exec(`
+    ALTER TABLE audits
+    ADD COLUMN IF NOT EXISTS google_slides_url TEXT
+  `);
+
+  await db.exec(`
+    ALTER TABLE audits
+    ADD COLUMN IF NOT EXISTS slides_generation_status TEXT DEFAULT 'NON_GENERE'
+  `);
+
+  await db.exec(`
+    ALTER TABLE audits
+    ADD COLUMN IF NOT EXISTS slides_generation_error TEXT
+  `);
+
+  await db.exec(`
+    ALTER TABLE audits
+    ADD COLUMN IF NOT EXISTS slides_generated_at TIMESTAMPTZ
+  `);
+
+  await db.run(`
+    UPDATE audits
+    SET slides_generation_status = 'NON_GENERE'
+    WHERE slides_generation_status IS NULL
   `);
 
   await db.exec(`

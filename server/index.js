@@ -32,6 +32,16 @@ const io = new Server(httpServer, {
 
 const PORT = process.env.PORT || 5000;
 const SECRET_KEY = process.env.JWT_SECRET || 'votre_cle_secrete_super_secure';
+const DEFAULT_GOOGLE_SLIDES_WEBHOOK_URL =
+    process.env.GOOGLE_SLIDES_WEBHOOK_URL ||
+    'https://primary-production-2eb79.up.railway.app/webhook-test/4f510189-32ea-4c74-af0f-2786b57308cf';
+const GOOGLE_SLIDES_URL_REGEX = /https?:\/\/docs\.google\.com\/presentation\/d\/[^\s"'<>]+/i;
+const GOOGLE_SLIDES_ID_KEYS = new Set([
+    'presentationid',
+    'googleslidesid',
+    'slidesid',
+    'presentationdocid'
+]);
 
 app.use(cors({
     origin: 'http://localhost:5173', // Vite default
@@ -63,6 +73,134 @@ const authenticateToken = (req, res, next) => {
         next();
     });
 };
+
+function normalizeSlidesKey(key) {
+    return String(key || '').toLowerCase().replace(/[^a-z]/g, '');
+}
+
+function summarizeSlidesMessage(value) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text) return null;
+    return text.length > 280 ? `${text.slice(0, 277)}...` : text;
+}
+
+function buildGoogleSlidesUrlFromId(presentationId) {
+    return `https://docs.google.com/presentation/d/${presentationId}/edit`;
+}
+
+function extractGoogleSlidesUrl(value, visited = new Set()) {
+    if (!value) return null;
+
+    if (typeof value === 'string') {
+        const match = value.match(GOOGLE_SLIDES_URL_REGEX);
+        return match ? match[0].replace(/[),.;]+$/, '') : null;
+    }
+
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const match = extractGoogleSlidesUrl(item, visited);
+            if (match) return match;
+        }
+        return null;
+    }
+
+    if (typeof value === 'object') {
+        if (visited.has(value)) return null;
+        visited.add(value);
+
+        for (const [key, nestedValue] of Object.entries(value)) {
+            if (
+                typeof nestedValue === 'string' &&
+                GOOGLE_SLIDES_ID_KEYS.has(normalizeSlidesKey(key)) &&
+                nestedValue.trim()
+            ) {
+                return buildGoogleSlidesUrlFromId(nestedValue.trim());
+            }
+
+            const match = extractGoogleSlidesUrl(nestedValue, visited);
+            if (match) return match;
+        }
+    }
+
+    return null;
+}
+
+function extractSlidesErrorMessage(value, visited = new Set()) {
+    if (!value) return null;
+
+    if (typeof value === 'string') {
+        return summarizeSlidesMessage(value);
+    }
+
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const message = extractSlidesErrorMessage(item, visited);
+            if (message) return message;
+        }
+        return null;
+    }
+
+    if (typeof value === 'object') {
+        if (visited.has(value)) return null;
+        visited.add(value);
+
+        const priorityKeys = ['error', 'message', 'detail', 'details'];
+        for (const key of priorityKeys) {
+            if (key in value) {
+                const message = extractSlidesErrorMessage(value[key], visited);
+                if (message) return message;
+            }
+        }
+
+        for (const nestedValue of Object.values(value)) {
+            const message = extractSlidesErrorMessage(nestedValue, visited);
+            if (message) return message;
+        }
+    }
+
+    return null;
+}
+
+async function triggerGoogleSlidesWebhook(recordId) {
+    const webhookUrl = new URL(DEFAULT_GOOGLE_SLIDES_WEBHOOK_URL);
+    webhookUrl.searchParams.set('RECORD_ID', recordId);
+
+    const response = await fetch(webhookUrl, {
+        method: 'GET',
+        signal: AbortSignal.timeout(120000)
+    });
+
+    const rawText = await response.text();
+    let payload = rawText;
+
+    if (rawText) {
+        try {
+            payload = JSON.parse(rawText);
+        } catch { }
+    }
+
+    const googleSlidesUrl =
+        extractGoogleSlidesUrl(payload) ||
+        extractGoogleSlidesUrl(rawText) ||
+        extractGoogleSlidesUrl(response.url);
+
+    if (!response.ok) {
+        throw new Error(
+            extractSlidesErrorMessage(payload) ||
+            summarizeSlidesMessage(rawText) ||
+            `Le webhook Slides a répondu avec le statut ${response.status}.`
+        );
+    }
+
+    if (!googleSlidesUrl) {
+        throw new Error('Le webhook Slides a répondu sans renvoyer de lien Google Slides exploitable.');
+    }
+
+    return {
+        googleSlidesUrl,
+        webhookUrl: webhookUrl.toString()
+    };
+}
 
 let db;
 
@@ -322,6 +460,96 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
     } catch (err) {
         console.error('SERVER ERROR (audit):', err);
         res.status(500).json({ error: 'Erreur lors de la création de l\'audit: ' + err.message });
+    }
+});
+
+app.post('/api/audits/:id/generate-slides', authenticateToken, async (req, res) => {
+    const userId = req.user.userId;
+    const auditId = req.params.id;
+
+    if (!db) {
+        return res.status(503).json({ error: 'Base de données en cours de chargement' });
+    }
+
+    try {
+        const audit = await db.get('SELECT * FROM audits WHERE id = ? AND user_id = ?', [auditId, userId]);
+
+        if (!audit) {
+            return res.status(404).json({ error: 'Audit non trouvé' });
+        }
+
+        if (audit.statut_global !== 'TERMINE') {
+            return res.status(409).json({
+                error: 'Le Google Slides peut être généré uniquement quand l’audit est terminé.'
+            });
+        }
+
+        if (!audit.airtable_record_id) {
+            return res.status(400).json({
+                error: 'Aucun RECORD_ID Airtable disponible pour cet audit.'
+            });
+        }
+
+        if (audit.slides_generation_status === 'EN_COURS') {
+            return res.status(409).json({
+                error: 'Une génération Google Slides est déjà en cours pour cet audit.'
+            });
+        }
+
+        await db.run(
+            `UPDATE audits
+             SET slides_generation_status = ?, slides_generation_error = NULL, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            ['EN_COURS', auditId]
+        );
+
+        const pendingAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+        io.emit('audit:update', pendingAudit);
+
+        try {
+            const { googleSlidesUrl, webhookUrl } = await triggerGoogleSlidesWebhook(audit.airtable_record_id);
+
+            await db.run(
+                `UPDATE audits
+                 SET google_slides_url = ?,
+                     slides_generation_status = ?,
+                     slides_generation_error = NULL,
+                     slides_generated_at = CURRENT_TIMESTAMP,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?`,
+                [googleSlidesUrl, 'PRET', auditId]
+            );
+
+            const updatedAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+            io.emit('audit:update', updatedAudit);
+
+            return res.json({
+                message: 'Google Slides généré avec succès',
+                googleSlidesUrl,
+                webhookUrl,
+                audit: updatedAudit
+            });
+        } catch (err) {
+            const errorMessage = summarizeSlidesMessage(err.message) || 'Erreur lors de la génération Google Slides';
+
+            await db.run(
+                `UPDATE audits
+                 SET slides_generation_status = ?, slides_generation_error = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?`,
+                ['ERREUR', errorMessage, auditId]
+            );
+
+            const failedAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+            io.emit('audit:update', failedAudit);
+
+            return res.status(502).json({
+                error: errorMessage,
+                audit: failedAudit
+            });
+        }
+    } catch (err) {
+        console.error('[SLIDES] Generation error:', err);
+        return res.status(500).json({ error: 'Erreur serveur lors de la génération du Google Slides' });
     }
 });
 
