@@ -34,7 +34,7 @@ const PORT = process.env.PORT || 5000;
 const SECRET_KEY = process.env.JWT_SECRET || 'votre_cle_secrete_super_secure';
 const DEFAULT_GOOGLE_SLIDES_WEBHOOK_URL =
     process.env.GOOGLE_SLIDES_WEBHOOK_URL ||
-    'https://primary-production-2eb79.up.railway.app/webhook-test/4f510189-32ea-4c74-af0f-2786b57308cf';
+    'https://primary-production-2eb79.up.railway.app/webhook/4f510189-32ea-4c74-af0f-2786b57308cf';
 const GOOGLE_SLIDES_URL_REGEX = /https?:\/\/docs\.google\.com\/presentation\/d\/[^\s"'<>]+/i;
 const GOOGLE_SLIDES_ID_KEYS = new Set([
     'presentationid',
@@ -86,6 +86,24 @@ function summarizeSlidesMessage(value) {
 
 function buildGoogleSlidesUrlFromId(presentationId) {
     return `https://docs.google.com/presentation/d/${presentationId}/edit`;
+}
+
+function buildSlidesWebhookCandidates(recordId) {
+    const primaryUrl = new URL(DEFAULT_GOOGLE_SLIDES_WEBHOOK_URL);
+    primaryUrl.searchParams.set('RECORD_ID', recordId);
+
+    const candidates = [primaryUrl];
+
+    if (primaryUrl.pathname.includes('/webhook-test/')) {
+        const fallbackUrl = new URL(primaryUrl.toString());
+        fallbackUrl.pathname = fallbackUrl.pathname.replace('/webhook-test/', '/webhook/');
+
+        if (fallbackUrl.toString() !== primaryUrl.toString()) {
+            candidates.push(fallbackUrl);
+        }
+    }
+
+    return candidates;
 }
 
 function extractGoogleSlidesUrl(value, visited = new Set()) {
@@ -161,45 +179,78 @@ function extractSlidesErrorMessage(value, visited = new Set()) {
     return null;
 }
 
+function buildSlidesAcceptedMessage(rawMessage) {
+    const message = summarizeSlidesMessage(rawMessage);
+
+    if (!message || /workflow was started/i.test(message)) {
+        return 'La génération du Google Slides a été lancée. Le lien sera disponible une fois le workflow terminé.';
+    }
+
+    return message;
+}
+
 async function triggerGoogleSlidesWebhook(recordId) {
-    const webhookUrl = new URL(DEFAULT_GOOGLE_SLIDES_WEBHOOK_URL);
-    webhookUrl.searchParams.set('RECORD_ID', recordId);
+    const webhookCandidates = buildSlidesWebhookCandidates(recordId);
+    let lastError = null;
 
-    const response = await fetch(webhookUrl, {
-        method: 'GET',
-        signal: AbortSignal.timeout(120000)
-    });
+    for (const webhookUrl of webhookCandidates) {
+        const response = await fetch(webhookUrl, {
+            method: 'GET',
+            signal: AbortSignal.timeout(120000)
+        });
 
-    const rawText = await response.text();
-    let payload = rawText;
+        const rawText = await response.text();
+        let payload = rawText;
 
-    if (rawText) {
-        try {
-            payload = JSON.parse(rawText);
-        } catch { }
+        if (rawText) {
+            try {
+                payload = JSON.parse(rawText);
+            } catch { }
+        }
+
+        const googleSlidesUrl =
+            extractGoogleSlidesUrl(payload) ||
+            extractGoogleSlidesUrl(rawText) ||
+            extractGoogleSlidesUrl(response.url);
+
+        if (!response.ok) {
+            lastError = new Error(
+                extractSlidesErrorMessage(payload) ||
+                summarizeSlidesMessage(rawText) ||
+                `Le webhook Slides a répondu avec le statut ${response.status}.`
+            );
+
+            const canFallbackToProduction =
+                response.status === 404 &&
+                webhookUrl.pathname.includes('/webhook-test/');
+
+            if (canFallbackToProduction) {
+                continue;
+            }
+
+            throw lastError;
+        }
+
+        if (googleSlidesUrl) {
+            return {
+                googleSlidesUrl,
+                webhookUrl: webhookUrl.toString(),
+                asynchronous: false,
+                message: 'Google Slides généré avec succès'
+            };
+        }
+
+        return {
+            googleSlidesUrl: null,
+            webhookUrl: webhookUrl.toString(),
+            asynchronous: true,
+            message: buildSlidesAcceptedMessage(
+                extractSlidesErrorMessage(payload) || rawText
+            )
+        };
     }
 
-    const googleSlidesUrl =
-        extractGoogleSlidesUrl(payload) ||
-        extractGoogleSlidesUrl(rawText) ||
-        extractGoogleSlidesUrl(response.url);
-
-    if (!response.ok) {
-        throw new Error(
-            extractSlidesErrorMessage(payload) ||
-            summarizeSlidesMessage(rawText) ||
-            `Le webhook Slides a répondu avec le statut ${response.status}.`
-        );
-    }
-
-    if (!googleSlidesUrl) {
-        throw new Error('Le webhook Slides a répondu sans renvoyer de lien Google Slides exploitable.');
-    }
-
-    return {
-        googleSlidesUrl,
-        webhookUrl: webhookUrl.toString()
-    };
+    throw lastError || new Error('Impossible de contacter le webhook Google Slides.');
 }
 
 let db;
@@ -508,7 +559,15 @@ app.post('/api/audits/:id/generate-slides', authenticateToken, async (req, res) 
         io.emit('audit:update', pendingAudit);
 
         try {
-            const { googleSlidesUrl, webhookUrl } = await triggerGoogleSlidesWebhook(audit.airtable_record_id);
+            const { googleSlidesUrl, webhookUrl, asynchronous, message } = await triggerGoogleSlidesWebhook(audit.airtable_record_id);
+
+            if (asynchronous || !googleSlidesUrl) {
+                return res.status(202).json({
+                    message,
+                    webhookUrl,
+                    audit: pendingAudit
+                });
+            }
 
             await db.run(
                 `UPDATE audits
@@ -525,7 +584,7 @@ app.post('/api/audits/:id/generate-slides', authenticateToken, async (req, res) 
             io.emit('audit:update', updatedAudit);
 
             return res.json({
-                message: 'Google Slides généré avec succès',
+                message,
                 googleSlidesUrl,
                 webhookUrl,
                 audit: updatedAudit

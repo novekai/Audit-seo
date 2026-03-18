@@ -50,6 +50,7 @@ function Slides() {
     const [refreshing, setRefreshing] = useState(false);
     const [submittingAuditId, setSubmittingAuditId] = useState(null);
     const [pageError, setPageError] = useState('');
+    const [pageNotice, setPageNotice] = useState('');
 
     const applyAuditUpdate = (audit) => {
         if (!audit) return;
@@ -75,7 +76,9 @@ function Slides() {
 
             setAudits(data);
             setPageError('');
+            setPageNotice('');
         } catch (err) {
+            setPageNotice('');
             setPageError(err.message || 'Impossible de charger les audits');
         } finally {
             setLoading(false);
@@ -90,6 +93,7 @@ function Slides() {
     const handleGenerateSlides = async (audit) => {
         setSubmittingAuditId(audit.id);
         setPageError('');
+        setPageNotice('');
 
         try {
             const response = await fetch(`/api/audits/${audit.id}/generate-slides`, {
@@ -103,8 +107,18 @@ function Slides() {
                 throw new Error(data.error || 'La génération du Google Slides a échoué');
             }
 
-            applyAuditUpdate(data.audit);
+            if (data.audit) {
+                applyAuditUpdate(data.audit);
+            }
+
+            setPageNotice(
+                data.message ||
+                (data.googleSlidesUrl
+                    ? 'Google Slides généré avec succès.'
+                    : 'La génération du Google Slides a été lancée.')
+            );
         } catch (err) {
+            setPageNotice('');
             setPageError(err.message || 'La génération du Google Slides a échoué');
         } finally {
             setSubmittingAuditId(null);
@@ -144,6 +158,13 @@ function Slides() {
                 <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 flex items-start gap-3">
                     <AlertCircle className="w-5 h-5 mt-0.5 shrink-0" />
                     <span>{pageError}</span>
+                </div>
+            )}
+
+            {pageNotice && (
+                <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700 flex items-start gap-3">
+                    <Clock className="w-5 h-5 mt-0.5 shrink-0" />
+                    <span>{pageNotice}</span>
                 </div>
             )}
 
