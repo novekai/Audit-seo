@@ -10,6 +10,21 @@ import {
 } from 'lucide-react';
 import { io } from 'socket.io-client';
 
+const TERMINAL_STEP_STATUSES = new Set([
+    'SUCCESS',
+    'SUCCES',
+    'WARNING',
+    'FAIT',
+    'SKIP',
+    'FAILED',
+    'ERROR',
+    'ERREUR'
+]);
+
+function isTerminalStepStatus(status) {
+    return TERMINAL_STEP_STATUSES.has(String(status || '').toUpperCase());
+}
+
 const Progression = ({ onOpenSlides }) => {
     const [audits, setAudits] = useState([]);
     const [activeAudit, setActiveAudit] = useState(null);
@@ -118,7 +133,8 @@ const Progression = ({ onOpenSlides }) => {
         const isPending = s === 'EN_ATTENTE' || !s;
         const color = isPending ? 'text-slate-500' :
             (s === 'SUCCESS' || s === 'SUCCES' || s === 'FAIT' ? 'text-green-400' :
-                (s === 'ERROR' || s === 'ERREUR' ? 'text-red-400' : 'text-blue-400'));
+                (s === 'SKIP' ? 'text-amber-500' :
+                    (s === 'FAILED' || s === 'ERROR' || s === 'ERREUR' ? 'text-red-400' : 'text-blue-400')));
 
         const icons = {
             robots_txt: Hourglass,
@@ -149,16 +165,20 @@ const Progression = ({ onOpenSlides }) => {
         <div className="flex flex-col p-4 rounded-xl border border-slate-200 bg-white/80 hover:bg-white transition-all group gap-2 shadow-sm">
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center bg-slate-50 border border-slate-200 group-hover:border-blue-300 transition-all ${['SUCCESS', 'SUCCES', 'FAIT'].includes(step.statut?.toUpperCase()) ? 'bg-green-50 border-green-200' : ''
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center bg-slate-50 border border-slate-200 group-hover:border-blue-300 transition-all ${['SUCCESS', 'SUCCES', 'FAIT'].includes(step.statut?.toUpperCase()) ? 'bg-green-50 border-green-200' :
+                        ['SKIP'].includes(step.statut?.toUpperCase()) ? 'bg-amber-50 border-amber-200' :
+                            ['FAILED', 'ERROR', 'ERREUR'].includes(step.statut?.toUpperCase()) ? 'bg-rose-50 border-rose-200' : ''
                         }`}>
                         {getStepIcon(step.step_key, step.statut)}
                     </div>
                     <div>
                         <h4 className="font-semibold text-sm text-slate-800 capitalize leading-none mb-1">{step.step_key.replace(/_/g, ' ')}</h4>
                         <div className="flex items-center gap-2">
-                            <span className={`text-[10px] font-bold uppercase tracking-tight px-1.5 py-0.5 rounded ${step.statut === 'SUCCESS' ? 'bg-green-500/10 text-green-500' :
+                            <span className={`text-[10px] font-bold uppercase tracking-tight px-1.5 py-0.5 rounded ${['SUCCESS', 'SUCCES', 'FAIT'].includes(step.statut?.toUpperCase()) ? 'bg-green-500/10 text-green-500' :
                                 step.statut === 'EN_COURS' ? 'bg-blue-500/10 text-blue-400' :
-                                    'bg-slate-100 text-slate-500'
+                                    step.statut?.toUpperCase() === 'SKIP' ? 'bg-amber-500/10 text-amber-600' :
+                                        ['FAILED', 'ERROR', 'ERREUR'].includes(step.statut?.toUpperCase()) ? 'bg-rose-500/10 text-rose-600' :
+                                            'bg-slate-100 text-slate-500'
                                 }`}>
                                 {step.statut}
                             </span>
@@ -240,7 +260,7 @@ const Progression = ({ onOpenSlides }) => {
                                             {(() => {
                                                 const total = activeAudit.steps?.length || 1;
                                                 const completed = activeAudit.steps?.filter(s =>
-                                                    ['SUCCESS', 'SUCCES', 'WARNING', 'FAIT'].includes(s.statut?.toUpperCase())
+                                                    isTerminalStepStatus(s.statut)
                                                 ).length || 0;
                                                 return Math.round((completed / total) * 100);
                                             })()}%
