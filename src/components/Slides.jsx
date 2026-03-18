@@ -59,6 +59,12 @@ function Slides() {
         setAudits((current) => current.map((item) => (item.id === audit.id ? audit : item)));
     };
 
+    const applyAuditPatch = (auditId, patch) => {
+        setAudits((current) =>
+            current.map((item) => (item.id === auditId ? { ...item, ...patch } : item))
+        );
+    };
+
     const fetchAudits = async ({ silent = false } = {}) => {
         if (silent) {
             setRefreshing(true);
@@ -96,6 +102,11 @@ function Slides() {
         setSubmittingAuditId(audit.id);
         setPageError('');
         setPageNotice('');
+        applyAuditPatch(audit.id, {
+            slides_generation_status: 'EN_COURS',
+            slides_generation_error: null,
+            slides_review_confirmed_at: null
+        });
 
         try {
             const response = await fetch(`/api/audits/${audit.id}/generate-slides`, {
@@ -120,6 +131,11 @@ function Slides() {
                     : 'La génération du Google Slides a été lancée.')
             );
         } catch (err) {
+            applyAuditPatch(audit.id, {
+                slides_generation_status: audit.slides_generation_status || 'NON_GENERE',
+                slides_generation_error: audit.slides_generation_error || null,
+                slides_review_confirmed_at: audit.slides_review_confirmed_at || null
+            });
             setPageNotice('');
             setPageError(err.message || 'La génération du Google Slides a échoué');
         } finally {
@@ -221,6 +237,7 @@ function Slides() {
                             const slidesStatus = audit.slides_generation_status || 'NON_GENERE';
                             const slidesMeta = SLIDES_STATUS_META[slidesStatus] || SLIDES_STATUS_META.NON_GENERE;
                             const isSubmitting = submittingAuditId === audit.id;
+                            const isGenerating = slidesStatus === 'EN_COURS';
                             const isReviewing = reviewingAuditId === audit.id;
                             const hasSlidesLink = Boolean(audit.google_slides_url);
                             const hasSlidesReviewConfirmation = Boolean(audit.slides_review_confirmed_at);
@@ -359,15 +376,19 @@ function Slides() {
                                             <button
                                                 type="button"
                                                 onClick={() => handleGenerateSlides(audit)}
-                                                disabled={isSubmitting}
+                                                disabled={isSubmitting || isGenerating}
                                                 className="btn-primary px-5 py-3 flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
                                             >
-                                                {isSubmitting ? (
+                                                {isSubmitting || isGenerating ? (
                                                     <RefreshCw className="w-4 h-4 animate-spin" />
                                                 ) : (
                                                     <PlaySquare className="w-4 h-4" />
                                                 )}
-                                                {hasSlidesLink ? 'Mettre à jour le Google Slides' : 'Générer le Google Slides'}
+                                                {isGenerating
+                                                    ? 'Génération en cours'
+                                                    : hasSlidesLink
+                                                        ? 'Mettre à jour le Google Slides'
+                                                        : 'Générer le Google Slides'}
                                             </button>
 
                                             {hasSlidesLink && (
