@@ -4,6 +4,7 @@ import {
     CheckCircle2,
     Clock,
     ExternalLink,
+    FileSpreadsheet,
     Link2,
     PlaySquare,
     RefreshCw
@@ -49,6 +50,7 @@ function Slides() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [submittingAuditId, setSubmittingAuditId] = useState(null);
+    const [reviewingAuditId, setReviewingAuditId] = useState(null);
     const [pageError, setPageError] = useState('');
     const [pageNotice, setPageNotice] = useState('');
 
@@ -125,6 +127,41 @@ function Slides() {
         }
     };
 
+    const handleSlidesReviewConfirmation = async (audit, confirmed) => {
+        setReviewingAuditId(audit.id);
+        setPageError('');
+        setPageNotice('');
+
+        try {
+            const response = await fetch(`/api/audits/${audit.id}/confirm-slides-review`, {
+                method: confirmed ? 'POST' : 'DELETE',
+                credentials: 'include'
+            });
+
+            const data = await readJsonSafely(response);
+            if (!response.ok) {
+                if (data.audit) applyAuditUpdate(data.audit);
+                throw new Error(data.error || 'Impossible de mettre à jour la confirmation de relecture');
+            }
+
+            if (data.audit) {
+                applyAuditUpdate(data.audit);
+            }
+
+            setPageNotice(
+                data.message ||
+                (confirmed
+                    ? 'Relecture du Google Slides confirmée.'
+                    : 'Confirmation de relecture retirée.')
+            );
+        } catch (err) {
+            setPageNotice('');
+            setPageError(err.message || 'Impossible de mettre à jour la confirmation de relecture');
+        } finally {
+            setReviewingAuditId(null);
+        }
+    };
+
     const completedAudits = audits.filter((audit) => audit.statut_global === 'TERMINE');
     const pendingAudits = audits.filter((audit) => audit.statut_global !== 'TERMINE');
 
@@ -184,7 +221,9 @@ function Slides() {
                             const slidesStatus = audit.slides_generation_status || 'NON_GENERE';
                             const slidesMeta = SLIDES_STATUS_META[slidesStatus] || SLIDES_STATUS_META.NON_GENERE;
                             const isSubmitting = submittingAuditId === audit.id;
+                            const isReviewing = reviewingAuditId === audit.id;
                             const hasSlidesLink = Boolean(audit.google_slides_url);
+                            const hasSlidesReviewConfirmation = Boolean(audit.slides_review_confirmed_at);
 
                             return (
                                 <div key={audit.id} className="glass rounded-2xl p-6 border border-slate-200/80 shadow-sm">
@@ -232,6 +271,80 @@ function Slides() {
                                             ) : (
                                                 <p className="text-sm text-slate-500">
                                                     Aucun lien disponible pour cet audit.
+                                                </p>
+                                            )}
+                                        </div>
+
+                                        <div className={`rounded-2xl border p-4 ${hasSlidesReviewConfirmation
+                                            ? 'border-emerald-200 bg-emerald-50/80'
+                                            : 'border-amber-200 bg-amber-50/80'
+                                            }`}>
+                                            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">
+                                                <CheckCircle2 className="w-4 h-4" />
+                                                Validation client du Google Slides
+                                            </div>
+
+                                            {!hasSlidesLink ? (
+                                                <p className="text-sm text-slate-600">
+                                                    Cette validation sera disponible dès que le Google Slides sera généré.
+                                                </p>
+                                            ) : hasSlidesReviewConfirmation ? (
+                                                <div className="space-y-3">
+                                                    <p className="text-sm text-slate-700">
+                                                        Le deck a été relu et validé dans l’application.
+                                                    </p>
+                                                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                                                        <Clock className="w-4 h-4" />
+                                                        Validation confirmée le {formatDate(audit.slides_review_confirmed_at)}
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleSlidesReviewConfirmation(audit, false)}
+                                                        disabled={isReviewing}
+                                                        className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 hover:border-blue-200 hover:text-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                                                    >
+                                                        {isReviewing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                                                        Retirer la validation
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-3">
+                                                    <p className="text-sm text-slate-700">
+                                                        Avant de préparer le Google Sheet plan d’actions client, confirmez ici que le Google Slides a bien été relu et ajusté si nécessaire.
+                                                    </p>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleSlidesReviewConfirmation(audit, true)}
+                                                        disabled={isReviewing}
+                                                        className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-200/80"
+                                                    >
+                                                        {isReviewing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                                                        Confirmer la relecture
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className={`rounded-2xl border p-4 ${hasSlidesReviewConfirmation
+                                            ? 'border-blue-200 bg-blue-50/80'
+                                            : 'border-slate-200 bg-slate-50/80'
+                                            }`}>
+                                            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">
+                                                <FileSpreadsheet className="w-4 h-4" />
+                                                Google Sheet plan d’actions client
+                                            </div>
+
+                                            {!hasSlidesLink ? (
+                                                <p className="text-sm text-slate-600">
+                                                    Cette étape sera disponible après la génération du Google Slides.
+                                                </p>
+                                            ) : !hasSlidesReviewConfirmation ? (
+                                                <p className="text-sm text-slate-600">
+                                                    En attente de validation du Google Slides par le client.
+                                                </p>
+                                            ) : (
+                                                <p className="text-sm text-slate-700">
+                                                    Le dossier est prêt pour la prochaine étape. La génération automatique du Google Sheet plan d’actions client reste à développer.
                                                 </p>
                                             )}
                                         </div>

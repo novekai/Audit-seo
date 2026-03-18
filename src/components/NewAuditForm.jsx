@@ -61,7 +61,7 @@ const NewAuditForm = ({ onAuditSuccess }) => {
         { name: 'siteName', label: 'Nom du site', icon: Globe, placeholder: 'Ex: EurekIA' },
         { name: 'siteUrl', label: 'Lien du site', icon: Globe, placeholder: 'https://mon-site.fr' },
         { name: 'auditSheetUrl', label: 'Lien Google Sheet Audit', icon: FileSpreadsheet, placeholder: 'Lien avec droits éditeurs' },
-        { name: 'actionPlanSheetUrl', label: 'Lien Plan d\'action', icon: FileSpreadsheet, placeholder: 'Lien avec droits éditeurs' },
+        { name: 'actionPlanSheetUrl', label: 'Lien Google Sheet Plan d\'action (source audit)', icon: FileSpreadsheet, placeholder: 'Sheet source utilisé pour les captures' },
         { name: 'mrmReportUrl', label: 'Lien Rapport My Ranking Metrics', icon: FileBarChart, placeholder: 'Lien du rapport' },
     ];
 
