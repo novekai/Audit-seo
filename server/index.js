@@ -14,6 +14,7 @@ import { Server } from 'socket.io';
 import { auditQueue } from './jobs/queue.js';
 import { initWorker } from './jobs/worker.js';
 import { initAirtablePoller } from './jobs/airtablePoller.js';
+import { reconcileAuditCompletion } from './utils/auditStatus.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -530,19 +531,21 @@ app.post('/api/audits/:id/generate-slides', authenticateToken, async (req, res) 
             return res.status(404).json({ error: 'Audit non trouvé' });
         }
 
-        if (audit.statut_global !== 'TERMINE') {
+        const effectiveAudit = await reconcileAuditCompletion(db, audit);
+
+        if (effectiveAudit.statut_global !== 'TERMINE') {
             return res.status(409).json({
                 error: 'Le Google Slides peut être généré uniquement quand l’audit est terminé.'
             });
         }
 
-        if (!audit.airtable_record_id) {
+        if (!effectiveAudit.airtable_record_id) {
             return res.status(400).json({
                 error: 'Aucun RECORD_ID Airtable disponible pour cet audit.'
             });
         }
 
-        if (audit.slides_generation_status === 'EN_COURS') {
+        if (effectiveAudit.slides_generation_status === 'EN_COURS') {
             return res.status(409).json({
                 error: 'Une génération Google Slides est déjà en cours pour cet audit.'
             });
@@ -559,7 +562,7 @@ app.post('/api/audits/:id/generate-slides', authenticateToken, async (req, res) 
         io.emit('audit:update', pendingAudit);
 
         try {
-            const { googleSlidesUrl, webhookUrl, asynchronous, message } = await triggerGoogleSlidesWebhook(audit.airtable_record_id);
+            const { googleSlidesUrl, webhookUrl, asynchronous, message } = await triggerGoogleSlidesWebhook(effectiveAudit.airtable_record_id);
 
             if (asynchronous || !googleSlidesUrl) {
                 return res.status(202).json({
@@ -618,7 +621,13 @@ app.get('/api/audits', authenticateToken, async (req, res) => {
     const userId = req.user.userId;
     try {
         const audits = await db.all('SELECT * FROM audits WHERE user_id = ? ORDER BY created_at DESC', [userId]);
-        res.json(audits);
+        const reconciledAudits = [];
+
+        for (const audit of audits) {
+            reconciledAudits.push(await reconcileAuditCompletion(db, audit));
+        }
+
+        res.json(reconciledAudits);
     } catch (err) {
         res.status(500).json({ error: 'Erreur serveur' });
     }
@@ -632,8 +641,9 @@ app.get('/api/audits/:id', authenticateToken, async (req, res) => {
         const audit = await db.get('SELECT * FROM audits WHERE id = ? AND user_id = ?', [auditId, userId]);
         if (!audit) return res.status(404).json({ error: 'Audit non trouvé' });
 
+        const reconciledAudit = await reconcileAuditCompletion(db, audit);
         const steps = await db.all('SELECT * FROM audit_steps WHERE audit_id = ?', [auditId]);
-        res.json({ ...audit, steps });
+        res.json({ ...reconciledAudit, steps });
     } catch (err) {
         res.status(500).json({ error: 'Erreur serveur' });
     }
