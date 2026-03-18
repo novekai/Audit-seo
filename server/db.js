@@ -83,6 +83,7 @@ export async function initDb() {
       slides_generation_status TEXT DEFAULT 'NON_GENERE',
       slides_generation_error TEXT,
       slides_generated_at TIMESTAMPTZ,
+      slides_review_confirmed_at TIMESTAMPTZ,
       statut_global TEXT DEFAULT 'EN_ATTENTE',
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -160,6 +161,11 @@ export async function initDb() {
   await db.exec(`
     ALTER TABLE audits
     ADD COLUMN IF NOT EXISTS slides_generated_at TIMESTAMPTZ
+  `);
+
+  await db.exec(`
+    ALTER TABLE audits
+    ADD COLUMN IF NOT EXISTS slides_review_confirmed_at TIMESTAMPTZ
   `);
 
   await db.run(`

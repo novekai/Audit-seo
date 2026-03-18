@@ -553,7 +553,10 @@ app.post('/api/audits/:id/generate-slides', authenticateToken, async (req, res) 
 
         await db.run(
             `UPDATE audits
-             SET slides_generation_status = ?, slides_generation_error = NULL, updated_at = CURRENT_TIMESTAMP
+             SET slides_generation_status = ?,
+                 slides_generation_error = NULL,
+                 slides_review_confirmed_at = NULL,
+                 updated_at = CURRENT_TIMESTAMP
              WHERE id = ?`,
             ['EN_COURS', auditId]
         );
@@ -578,6 +581,7 @@ app.post('/api/audits/:id/generate-slides', authenticateToken, async (req, res) 
                      slides_generation_status = ?,
                      slides_generation_error = NULL,
                      slides_generated_at = CURRENT_TIMESTAMP,
+                     slides_review_confirmed_at = NULL,
                      updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?`,
                 [googleSlidesUrl, 'PRET', auditId]
@@ -613,6 +617,78 @@ app.post('/api/audits/:id/generate-slides', authenticateToken, async (req, res) 
     } catch (err) {
         console.error('[SLIDES] Generation error:', err);
         return res.status(500).json({ error: 'Erreur serveur lors de la génération du Google Slides' });
+    }
+});
+
+app.post('/api/audits/:id/confirm-slides-review', authenticateToken, async (req, res) => {
+    const userId = req.user.userId;
+    const auditId = req.params.id;
+
+    try {
+        const audit = await db.get('SELECT * FROM audits WHERE id = ? AND user_id = ?', [auditId, userId]);
+
+        if (!audit) {
+            return res.status(404).json({ error: 'Audit non trouvé' });
+        }
+
+        if (!audit.google_slides_url) {
+            return res.status(409).json({
+                error: 'Le Google Slides doit être généré avant de confirmer sa relecture.'
+            });
+        }
+
+        await db.run(
+            `UPDATE audits
+             SET slides_review_confirmed_at = CURRENT_TIMESTAMP,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [auditId]
+        );
+
+        const updatedAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+        io.emit('audit:update', updatedAudit);
+
+        return res.json({
+            message: 'Relecture du Google Slides confirmée.',
+            audit: updatedAudit
+        });
+    } catch (err) {
+        return res.status(500).json({
+            error: 'Erreur serveur lors de la confirmation de relecture du Google Slides'
+        });
+    }
+});
+
+app.delete('/api/audits/:id/confirm-slides-review', authenticateToken, async (req, res) => {
+    const userId = req.user.userId;
+    const auditId = req.params.id;
+
+    try {
+        const audit = await db.get('SELECT * FROM audits WHERE id = ? AND user_id = ?', [auditId, userId]);
+
+        if (!audit) {
+            return res.status(404).json({ error: 'Audit non trouvé' });
+        }
+
+        await db.run(
+            `UPDATE audits
+             SET slides_review_confirmed_at = NULL,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [auditId]
+        );
+
+        const updatedAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+        io.emit('audit:update', updatedAudit);
+
+        return res.json({
+            message: 'Confirmation de relecture retirée.',
+            audit: updatedAudit
+        });
+    } catch (err) {
+        return res.status(500).json({
+            error: 'Erreur serveur lors du retrait de la confirmation de relecture'
+        });
     }
 });
 
