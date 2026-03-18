@@ -1,6 +1,7 @@
 import Airtable from 'airtable';
 import { auditQueue } from './queue.js';
 import { v4 as uuidv4 } from 'uuid';
+import { reconcileAuditCompletion, shouldIgnoreAirtableStatusRegression } from '../utils/auditStatus.js';
 
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 const table = base(process.env.AIRTABLE_TABLE_ID);
@@ -68,33 +69,53 @@ async function syncAirtableToDb(io, db) {
             const existing = await db.get('SELECT * FROM audits WHERE airtable_record_id = ?', [airtableId]);
 
             if (existing) {
+                const localAudit = await reconcileAuditCompletion(db, existing);
+
                 // Determine what the target local status should be
                 const targetLocalStatus = mapAirtableStatusToLocalStatus(airtableStatus);
 
                 // 1. Bidirectional Sync: Only update if REALLY needed
                 const hasChanged =
-                    existing.nom_site !== siteName ||
-                    existing.url_site !== siteUrl ||
-                    existing.sheet_audit_url !== sheetAuditUrl ||
-                    existing.sheet_plan_url !== sheetPlanUrl ||
-                    existing.mrm_report_url !== mrmReportUrl ||
-                    existing.statut_global !== targetLocalStatus;
+                    localAudit.nom_site !== siteName ||
+                    localAudit.url_site !== siteUrl ||
+                    localAudit.sheet_audit_url !== sheetAuditUrl ||
+                    localAudit.sheet_plan_url !== sheetPlanUrl ||
+                    localAudit.mrm_report_url !== mrmReportUrl ||
+                    (
+                        localAudit.statut_global !== targetLocalStatus &&
+                        !shouldIgnoreAirtableStatusRegression(localAudit.statut_global, targetLocalStatus)
+                    );
                 // If local is matching Airtable, or we just updated it, worker will see it.
 
                 if (hasChanged) {
-                    console.log(`[POLLER] Updating local record ${existing.id} (Airtable: ${airtableStatus})`);
+                    console.log(`[POLLER] Updating local record ${localAudit.id} (Airtable: ${airtableStatus})`);
 
                     await db.run(
                         'UPDATE audits SET nom_site = ?, url_site = ?, sheet_audit_url = ?, sheet_plan_url = ?, mrm_report_url = ?, statut_global = ? WHERE id = ?',
-                        [siteName, siteUrl, sheetAuditUrl, sheetPlanUrl, mrmReportUrl, targetLocalStatus, existing.id]
+                        [
+                            siteName,
+                            siteUrl,
+                            sheetAuditUrl,
+                            sheetPlanUrl,
+                            mrmReportUrl,
+                            shouldIgnoreAirtableStatusRegression(localAudit.statut_global, targetLocalStatus)
+                                ? localAudit.statut_global
+                                : targetLocalStatus,
+                            localAudit.id
+                        ]
                     );
 
                     // Notify frontend
                     io.emit('audit:update', {
-                        ...existing,
+                        ...localAudit,
                         nom_site: siteName,
                         url_site: siteUrl,
-                        statut_global: targetLocalStatus
+                        sheet_audit_url: sheetAuditUrl,
+                        sheet_plan_url: sheetPlanUrl,
+                        mrm_report_url: mrmReportUrl,
+                        statut_global: shouldIgnoreAirtableStatusRegression(localAudit.statut_global, targetLocalStatus)
+                            ? localAudit.statut_global
+                            : targetLocalStatus
                     });
                 }
 
@@ -144,27 +165,27 @@ async function syncAirtableToDb(io, db) {
 
                 for (const mapping of stepMappings) {
                     const imageUrl = record.get(mapping.field);
-                    let step = await db.get('SELECT * FROM audit_steps WHERE audit_id = ? AND step_key = ?', [existing.id, mapping.key]);
+                    let step = await db.get('SELECT * FROM audit_steps WHERE audit_id = ? AND step_key = ?', [localAudit.id, mapping.key]);
 
                     if (!step) {
                         await db.run(
                             'INSERT INTO audit_steps (id, audit_id, step_key, statut, output_cloudinary_url) VALUES (?, ?, ?, ?, ?)',
-                            [uuidv4(), existing.id, mapping.key, imageUrl ? 'SUCCESS' : 'EN_ATTENTE', imageUrl || null]
+                            [uuidv4(), localAudit.id, mapping.key, imageUrl ? 'SUCCESS' : 'EN_ATTENTE', imageUrl || null]
                         );
-                        step = await db.get('SELECT * FROM audit_steps WHERE audit_id = ? AND step_key = ?', [existing.id, mapping.key]);
+                        step = await db.get('SELECT * FROM audit_steps WHERE audit_id = ? AND step_key = ?', [localAudit.id, mapping.key]);
                     }
 
                     if (imageUrl) {
                         if (step && step.statut !== 'SUCCESS' && step.statut !== 'SUCCES') {
-                            console.log(`[POLLER] Step ${mapping.key} mark as SUCCESS for ${existing.id} (found URL in Airtable)`);
+                            console.log(`[POLLER] Step ${mapping.key} mark as SUCCESS for ${localAudit.id} (found URL in Airtable)`);
                             await db.run(
                                 'UPDATE audit_steps SET statut = ?, output_cloudinary_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
                                 ['SUCCESS', imageUrl, step.id]
                             );
 
                             // Real-time update for this specific step
-                            io.to(`audit:${existing.id}`).emit('step:update', {
-                                auditId: existing.id,
+                            io.to(`audit:${localAudit.id}`).emit('step:update', {
+                                auditId: localAudit.id,
                                 step: { step_key: mapping.key, statut: 'SUCCESS', output_cloudinary_url: imageUrl }
                             });
                         }
@@ -173,20 +194,20 @@ async function syncAirtableToDb(io, db) {
 
                 // 3. Re-trigger logic: If "A faire" in Airtable AND local status is not already "EN_ATTENTE"
                 // We allow re-trigger even from "EN_COURS" because the user might have clicked "A faire" to restart a stuck job.
-                if (airtableStatus === 'A faire' && existing.statut_global !== 'EN_ATTENTE') {
-                    console.log(`[POLLER] Re-triggering audit ${existing.id} from Airtable (Force Reset).`);
-                    await db.run('UPDATE audits SET statut_global = ? WHERE id = ?', ['EN_ATTENTE', existing.id]);
+                if (airtableStatus === 'A faire' && localAudit.statut_global !== 'EN_ATTENTE') {
+                    console.log(`[POLLER] Re-triggering audit ${localAudit.id} from Airtable (Force Reset).`);
+                    await db.run('UPDATE audits SET statut_global = ? WHERE id = ?', ['EN_ATTENTE', localAudit.id]);
                     await db.run(
                         'UPDATE audit_steps SET statut = ?, output_cloudinary_url = NULL, resultat = NULL WHERE audit_id = ?',
-                        ['EN_ATTENTE', existing.id]
+                        ['EN_ATTENTE', localAudit.id]
                     );
 
-                    await auditQueue.add(`audit-${existing.id}`, { auditId: existing.id, userId: defaultUser.id }, {
+                    await auditQueue.add(`audit-${localAudit.id}`, { auditId: localAudit.id, userId: defaultUser.id }, {
                         attempts: 3,
                         backoff: { type: 'exponential', delay: 5000 }
                     });
 
-                    io.emit('audit:update', { id: existing.id, statut_global: 'EN_ATTENTE' });
+                    io.emit('audit:update', { id: localAudit.id, statut_global: 'EN_ATTENTE' });
                 }
                 continue;
             }
