@@ -502,14 +502,31 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
             console.log(`[QUEUE] Audit ${auditId} successfully added to queue`);
         } catch (queueErr) {
             console.error('[QUEUE ERROR]:', queueErr.message);
-            // We continue even if queueing fails, as Airtable is already updated
-            // and the poller might pick it up later as a fallback if implemented
+
+            await db.run(
+                'UPDATE audits SET statut_global = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                ['ERREUR', auditId]
+            );
+
+            if (airtableId) {
+                await updateAirtableStatut(airtableId, 'Erreur');
+            }
+
+            const failedAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+            io.emit('audit:created', failedAudit);
+
+            return res.status(503).json({
+                error: 'L’audit a été créé mais n’a pas pu démarrer. La file de traitement Redis est indisponible.',
+                auditId,
+                audit: failedAudit
+            });
         }
 
         // 6. Notify clients via Socket.io
-        io.emit('audit:created', { id: auditId, user_id: userId, nom_site: siteName, url_site: siteUrl, statut_global: 'EN_COURS', created_at: new Date().toISOString() });
+        const createdAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+        io.emit('audit:created', createdAudit);
 
-        res.status(201).json({ auditId, message: 'Audit lancé avec succès' });
+        res.status(201).json({ auditId, message: 'Audit mis en file avec succès', audit: createdAudit });
     } catch (err) {
         console.error('SERVER ERROR (audit):', err);
         res.status(500).json({ error: 'Erreur lors de la création de l\'audit: ' + err.message });
