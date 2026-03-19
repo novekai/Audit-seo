@@ -120,7 +120,7 @@ function Slides() {
 
         const intervalId = window.setInterval(() => {
             fetchAudits({ silent: true });
-        }, 10000);
+        }, 1000);
 
         return () => window.clearInterval(intervalId);
     }, [audits]);
