@@ -10,7 +10,9 @@ import { v4 as uuidv4 } from 'uuid';
 import { encrypt } from './utils/encrypt.js';
 import {
     createAirtableAudit,
+    GENERATED_ACTION_PLAN_FIELD_NAME,
     getAirtableRecord,
+    readGeneratedActionPlanUrl,
     readGeneratedSlidesUrl,
     updateAirtableStatut
 } from './airtable.js';
@@ -20,6 +22,7 @@ import { auditQueue } from './jobs/queue.js';
 import { initWorker } from './jobs/worker.js';
 import { initAirtablePoller } from './jobs/airtablePoller.js';
 import { reconcileAuditCompletion } from './utils/auditStatus.js';
+import { generateActionPlanSheet } from './modules/action_plan_sheet.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,15 +44,25 @@ const SECRET_KEY = process.env.JWT_SECRET || 'votre_cle_secrete_super_secure';
 const DEFAULT_GOOGLE_SLIDES_WEBHOOK_URL =
     process.env.GOOGLE_SLIDES_WEBHOOK_URL ||
     'https://primary-production-2eb79.up.railway.app/webhook/4f510189-32ea-4c74-af0f-2786b57308cf';
+const DEFAULT_GOOGLE_ACTION_PLAN_WEBHOOK_URL =
+    process.env.GOOGLE_ACTION_PLAN_WEBHOOK_URL ||
+    '';
 const SLIDES_GENERATION_LOCK_TIMEOUT_MS = 15 * 60 * 1000;
 const SLIDES_AIRTABLE_POLL_INTERVAL_MS = 10000;
 const SLIDES_AIRTABLE_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 const GOOGLE_SLIDES_URL_REGEX = /https?:\/\/docs\.google\.com\/presentation\/d\/[^\s"'<>]+/i;
+const GOOGLE_SHEETS_URL_REGEX = /https?:\/\/docs\.google\.com\/spreadsheets\/d\/[^\s"'<>]+/i;
 const GOOGLE_SLIDES_ID_KEYS = new Set([
     'presentationid',
     'googleslidesid',
     'slidesid',
     'presentationdocid'
+]);
+const GOOGLE_SHEETS_ID_KEYS = new Set([
+    'spreadsheetid',
+    'googlesheetid',
+    'googlespreadsheetid',
+    'sheetid'
 ]);
 
 app.use(cors({
@@ -97,8 +110,34 @@ function buildGoogleSlidesUrlFromId(presentationId) {
     return `https://docs.google.com/presentation/d/${presentationId}/edit`;
 }
 
+function buildGoogleSheetUrlFromId(spreadsheetId) {
+    return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+}
+
 function buildSlidesWebhookCandidates(recordId) {
     const primaryUrl = new URL(DEFAULT_GOOGLE_SLIDES_WEBHOOK_URL);
+    primaryUrl.searchParams.set('RECORD_ID', recordId);
+
+    const candidates = [primaryUrl];
+
+    if (primaryUrl.pathname.includes('/webhook-test/')) {
+        const fallbackUrl = new URL(primaryUrl.toString());
+        fallbackUrl.pathname = fallbackUrl.pathname.replace('/webhook-test/', '/webhook/');
+
+        if (fallbackUrl.toString() !== primaryUrl.toString()) {
+            candidates.push(fallbackUrl);
+        }
+    }
+
+    return candidates;
+}
+
+function buildActionPlanWebhookCandidates(recordId) {
+    if (!DEFAULT_GOOGLE_ACTION_PLAN_WEBHOOK_URL) {
+        return [];
+    }
+
+    const primaryUrl = new URL(DEFAULT_GOOGLE_ACTION_PLAN_WEBHOOK_URL);
     primaryUrl.searchParams.set('RECORD_ID', recordId);
 
     const candidates = [primaryUrl];
@@ -152,6 +191,43 @@ function extractGoogleSlidesUrl(value, visited = new Set()) {
     return null;
 }
 
+function extractGoogleSheetUrl(value, visited = new Set()) {
+    if (!value) return null;
+
+    if (typeof value === 'string') {
+        const match = value.match(GOOGLE_SHEETS_URL_REGEX);
+        return match ? match[0].replace(/[),.;]+$/, '') : null;
+    }
+
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const match = extractGoogleSheetUrl(item, visited);
+            if (match) return match;
+        }
+        return null;
+    }
+
+    if (typeof value === 'object') {
+        if (visited.has(value)) return null;
+        visited.add(value);
+
+        for (const [key, nestedValue] of Object.entries(value)) {
+            if (
+                typeof nestedValue === 'string' &&
+                GOOGLE_SHEETS_ID_KEYS.has(normalizeSlidesKey(key)) &&
+                nestedValue.trim()
+            ) {
+                return buildGoogleSheetUrlFromId(nestedValue.trim());
+            }
+
+            const match = extractGoogleSheetUrl(nestedValue, visited);
+            if (match) return match;
+        }
+    }
+
+    return null;
+}
+
 function extractSlidesErrorMessage(value, visited = new Set()) {
     if (!value) return null;
 
@@ -188,11 +264,25 @@ function extractSlidesErrorMessage(value, visited = new Set()) {
     return null;
 }
 
+function extractActionPlanErrorMessage(value, visited = new Set()) {
+    return extractSlidesErrorMessage(value, visited);
+}
+
 function buildSlidesAcceptedMessage(rawMessage) {
     const message = summarizeSlidesMessage(rawMessage);
 
     if (!message || /workflow was started/i.test(message)) {
         return 'La génération du Google Slides a été lancée. Le lien sera disponible une fois le workflow terminé.';
+    }
+
+    return message;
+}
+
+function buildActionPlanAcceptedMessage(rawMessage) {
+    const message = summarizeSlidesMessage(rawMessage);
+
+    if (!message || /workflow was started/i.test(message)) {
+        return 'La génération du Google Sheet plan d’actions a été lancée. Le lien sera disponible une fois le workflow terminé.';
     }
 
     return message;
@@ -211,11 +301,25 @@ function isSlidesGenerationLockStale(audit) {
     return Date.now() - updatedAtMs > SLIDES_GENERATION_LOCK_TIMEOUT_MS;
 }
 
+function isActionPlanGenerationLockStale(audit) {
+    if (!audit || audit.action_plan_generation_status !== 'EN_COURS' || !audit.updated_at) {
+        return false;
+    }
+
+    const updatedAtMs = new Date(audit.updated_at).getTime();
+    if (!Number.isFinite(updatedAtMs)) {
+        return false;
+    }
+
+    return Date.now() - updatedAtMs > SLIDES_GENERATION_LOCK_TIMEOUT_MS;
+}
+
 function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const activeSlidesAirtablePollers = new Map();
+const activeActionPlanAirtablePollers = new Map();
 
 async function syncSlidesLinkFromAirtable(auditId, airtableRecordId) {
     const airtableRecord = await getAirtableRecord(airtableRecordId);
@@ -231,6 +335,11 @@ async function syncSlidesLinkFromAirtable(auditId, airtableRecordId) {
              slides_generation_status = ?,
              slides_generation_error = NULL,
              slides_generated_at = CURRENT_TIMESTAMP,
+             slides_review_confirmed_at = NULL,
+             google_action_plan_url = NULL,
+             action_plan_generation_status = 'NON_GENERE',
+             action_plan_generation_error = NULL,
+             action_plan_generated_at = NULL,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
         [googleSlidesUrl, 'PRET', auditId]
@@ -310,6 +419,99 @@ function watchSlidesLinkInAirtable(auditId, airtableRecordId) {
     return watcherPromise;
 }
 
+async function syncActionPlanLinkFromAirtable(auditId, airtableRecordId) {
+    const airtableRecord = await getAirtableRecord(airtableRecordId);
+    const googleActionPlanUrl = readGeneratedActionPlanUrl(airtableRecord);
+
+    if (!googleActionPlanUrl) {
+        return null;
+    }
+
+    await db.run(
+        `UPDATE audits
+         SET google_action_plan_url = ?,
+             action_plan_generation_status = ?,
+             action_plan_generation_error = NULL,
+             action_plan_generated_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [googleActionPlanUrl, 'PRET', auditId]
+    );
+
+    const updatedAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+    io.emit('audit:update', updatedAudit);
+    console.log(`[ACTION PLAN] Google Sheet link synced from Airtable for audit ${auditId}`);
+
+    return updatedAudit;
+}
+
+function watchActionPlanLinkInAirtable(auditId, airtableRecordId) {
+    if (activeActionPlanAirtablePollers.has(auditId)) {
+        return activeActionPlanAirtablePollers.get(auditId);
+    }
+
+    const watcherPromise = (async () => {
+        const deadline = Date.now() + SLIDES_AIRTABLE_POLL_TIMEOUT_MS;
+
+        while (Date.now() < deadline) {
+            const currentAudit = await db.get(
+                'SELECT google_action_plan_url, action_plan_generation_status FROM audits WHERE id = ?',
+                [auditId]
+            );
+
+            if (!currentAudit) {
+                return null;
+            }
+
+            if (currentAudit.google_action_plan_url || currentAudit.action_plan_generation_status === 'PRET') {
+                return currentAudit;
+            }
+
+            if (currentAudit.action_plan_generation_status === 'ERREUR') {
+                return null;
+            }
+
+            try {
+                const updatedAudit = await syncActionPlanLinkFromAirtable(auditId, airtableRecordId);
+                if (updatedAudit?.google_action_plan_url) {
+                    return updatedAudit;
+                }
+            } catch (err) {
+                console.error(`[ACTION PLAN] Airtable polling error for audit ${auditId}:`, err.message);
+            }
+
+            await delay(SLIDES_AIRTABLE_POLL_INTERVAL_MS);
+        }
+
+        await db.run(
+            `UPDATE audits
+             SET action_plan_generation_status = ?,
+                 action_plan_generation_error = ?,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ? AND action_plan_generation_status = ?`,
+            [
+                'ERREUR',
+                `Le workflow plan d’actions a été lancé, mais le champ Airtable "${GENERATED_ACTION_PLAN_FIELD_NAME}" n’a pas été renseigné dans le délai attendu.`,
+                auditId,
+                'EN_COURS'
+            ]
+        );
+
+        const timeoutAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+        if (timeoutAudit) {
+            io.emit('audit:update', timeoutAudit);
+        }
+
+        console.warn(`[ACTION PLAN] Airtable polling timed out for audit ${auditId}`);
+        return null;
+    })().finally(() => {
+        activeActionPlanAirtablePollers.delete(auditId);
+    });
+
+    activeActionPlanAirtablePollers.set(auditId, watcherPromise);
+    return watcherPromise;
+}
+
 async function triggerGoogleSlidesWebhook(recordId) {
     const webhookCandidates = buildSlidesWebhookCandidates(recordId);
     let lastError = null;
@@ -374,6 +576,76 @@ async function triggerGoogleSlidesWebhook(recordId) {
     }
 
     throw lastError || new Error('Impossible de contacter le webhook Google Slides.');
+}
+
+async function triggerGoogleActionPlanWebhook(recordId) {
+    const webhookCandidates = buildActionPlanWebhookCandidates(recordId);
+    let lastError = null;
+
+    if (webhookCandidates.length === 0) {
+        throw new Error('Le webhook Google Sheet plan d’actions n’est pas configuré.');
+    }
+
+    for (const webhookUrl of webhookCandidates) {
+        console.log(`[ACTION PLAN] Calling webhook: ${webhookUrl.toString()}`);
+        const response = await fetch(webhookUrl, {
+            method: 'GET',
+            signal: AbortSignal.timeout(120000)
+        });
+        console.log(`[ACTION PLAN] Webhook response status: ${response.status}`);
+
+        const rawText = await response.text();
+        let payload = rawText;
+
+        if (rawText) {
+            try {
+                payload = JSON.parse(rawText);
+            } catch { }
+        }
+
+        const googleActionPlanUrl =
+            extractGoogleSheetUrl(payload) ||
+            extractGoogleSheetUrl(rawText) ||
+            extractGoogleSheetUrl(response.url);
+
+        if (!response.ok) {
+            lastError = new Error(
+                extractActionPlanErrorMessage(payload) ||
+                summarizeSlidesMessage(rawText) ||
+                `Le webhook Google Sheet plan d’actions a répondu avec le statut ${response.status}.`
+            );
+
+            const canFallbackToProduction =
+                response.status === 404 &&
+                webhookUrl.pathname.includes('/webhook-test/');
+
+            if (canFallbackToProduction) {
+                continue;
+            }
+
+            throw lastError;
+        }
+
+        if (googleActionPlanUrl) {
+            return {
+                googleActionPlanUrl,
+                webhookUrl: webhookUrl.toString(),
+                asynchronous: false,
+                message: 'Google Sheet plan d’actions généré avec succès'
+            };
+        }
+
+        return {
+            googleActionPlanUrl: null,
+            webhookUrl: webhookUrl.toString(),
+            asynchronous: true,
+            message: buildActionPlanAcceptedMessage(
+                extractActionPlanErrorMessage(payload) || rawText
+            )
+        };
+    }
+
+    throw lastError || new Error('Impossible de contacter le webhook Google Sheet plan d’actions.');
 }
 
 let db;
@@ -699,6 +971,10 @@ app.post('/api/audits/:id/generate-slides', authenticateToken, async (req, res) 
              SET slides_generation_status = ?,
                  slides_generation_error = NULL,
                  slides_review_confirmed_at = NULL,
+                 google_action_plan_url = NULL,
+                 action_plan_generation_status = 'NON_GENERE',
+                 action_plan_generation_error = NULL,
+                 action_plan_generated_at = NULL,
                  updated_at = CURRENT_TIMESTAMP
              WHERE id = ?`,
             ['EN_COURS', auditId]
@@ -729,6 +1005,10 @@ app.post('/api/audits/:id/generate-slides', authenticateToken, async (req, res) 
                      slides_generation_error = NULL,
                      slides_generated_at = CURRENT_TIMESTAMP,
                      slides_review_confirmed_at = NULL,
+                     google_action_plan_url = NULL,
+                     action_plan_generation_status = 'NON_GENERE',
+                     action_plan_generation_error = NULL,
+                     action_plan_generated_at = NULL,
                      updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?`,
                 [googleSlidesUrl, 'PRET', auditId]
@@ -835,6 +1115,110 @@ app.delete('/api/audits/:id/confirm-slides-review', authenticateToken, async (re
     } catch (err) {
         return res.status(500).json({
             error: 'Erreur serveur lors du retrait de la confirmation de relecture'
+        });
+    }
+});
+
+app.post('/api/audits/:id/generate-action-plan', authenticateToken, async (req, res) => {
+    const userId = req.user.userId;
+    const auditId = req.params.id;
+
+    if (!db) {
+        return res.status(503).json({ error: 'Base de données en cours de chargement' });
+    }
+
+    try {
+        const audit = await db.get('SELECT * FROM audits WHERE id = ? AND user_id = ?', [auditId, userId]);
+
+        if (!audit) {
+            return res.status(404).json({ error: 'Audit non trouvé' });
+        }
+
+        if (!audit.google_slides_url) {
+            return res.status(409).json({
+                error: 'Le Google Slides doit être généré avant de lancer le Google Sheet plan d’actions.'
+            });
+        }
+
+        if (!audit.slides_review_confirmed_at) {
+            return res.status(409).json({
+                error: 'Le client doit confirmer la relecture du Google Slides avant de générer le Google Sheet plan d’actions.'
+            });
+        }
+
+        if (audit.action_plan_generation_status === 'EN_COURS' && !isActionPlanGenerationLockStale(audit)) {
+            return res.status(409).json({
+                error: 'Une génération du Google Sheet plan d’actions est déjà en cours pour cet audit.'
+            });
+        }
+
+        if (isActionPlanGenerationLockStale(audit)) {
+            console.warn(`[ACTION PLAN] Clearing stale generation lock for audit ${auditId}`);
+        }
+
+        await db.run(
+            `UPDATE audits
+             SET action_plan_generation_status = ?,
+                 action_plan_generation_error = NULL,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            ['EN_COURS', auditId]
+        );
+
+        const pendingAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+        io.emit('audit:update', pendingAudit);
+
+        try {
+            const { spreadsheetUrl, sourceTabsCopied, actionCount } = await generateActionPlanSheet(audit);
+
+            await db.run(
+                `UPDATE audits
+                 SET google_action_plan_url = ?,
+                     action_plan_generation_status = ?,
+                     action_plan_generation_error = NULL,
+                     action_plan_generated_at = CURRENT_TIMESTAMP,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?`,
+                [spreadsheetUrl, 'PRET', auditId]
+            );
+
+            const updatedAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+            io.emit('audit:update', updatedAudit);
+
+            return res.json({
+                message: sourceTabsCopied > 0
+                    ? `Google Sheet plan d’actions généré avec succès. ${actionCount} action(s) proposée(s). ${sourceTabsCopied} onglet(s) source ont été ajoutés.`
+                    : `Google Sheet plan d’actions généré avec succès. ${actionCount} action(s) proposée(s).`,
+                googleActionPlanUrl: spreadsheetUrl,
+                actionCount,
+                audit: updatedAudit
+            });
+        } catch (err) {
+            const errorMessage =
+                summarizeSlidesMessage(err.message) ||
+                'Erreur lors de la génération du Google Sheet plan d’actions';
+
+            await db.run(
+                `UPDATE audits
+                 SET action_plan_generation_status = ?,
+                     action_plan_generation_error = ?,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?`,
+                ['ERREUR', errorMessage, auditId]
+            );
+
+            const failedAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+            io.emit('audit:update', failedAudit);
+
+            return res.status(502).json({
+                error: errorMessage,
+                audit: failedAudit
+            });
+        }
+    } catch (err) {
+        console.error('[ACTION PLAN] Generation error:', err);
+        return res.status(500).json({
+            error: 'Erreur serveur lors de la génération du Google Sheet plan d’actions'
         });
     }
 });

@@ -84,6 +84,10 @@ export async function initDb() {
       slides_generation_error TEXT,
       slides_generated_at TIMESTAMPTZ,
       slides_review_confirmed_at TIMESTAMPTZ,
+      google_action_plan_url TEXT,
+      action_plan_generation_status TEXT DEFAULT 'NON_GENERE',
+      action_plan_generation_error TEXT,
+      action_plan_generated_at TIMESTAMPTZ,
       statut_global TEXT DEFAULT 'EN_ATTENTE',
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -168,10 +172,36 @@ export async function initDb() {
     ADD COLUMN IF NOT EXISTS slides_review_confirmed_at TIMESTAMPTZ
   `);
 
+  await db.exec(`
+    ALTER TABLE audits
+    ADD COLUMN IF NOT EXISTS google_action_plan_url TEXT
+  `);
+
+  await db.exec(`
+    ALTER TABLE audits
+    ADD COLUMN IF NOT EXISTS action_plan_generation_status TEXT DEFAULT 'NON_GENERE'
+  `);
+
+  await db.exec(`
+    ALTER TABLE audits
+    ADD COLUMN IF NOT EXISTS action_plan_generation_error TEXT
+  `);
+
+  await db.exec(`
+    ALTER TABLE audits
+    ADD COLUMN IF NOT EXISTS action_plan_generated_at TIMESTAMPTZ
+  `);
+
   await db.run(`
     UPDATE audits
     SET slides_generation_status = 'NON_GENERE'
     WHERE slides_generation_status IS NULL
+  `);
+
+  await db.run(`
+    UPDATE audits
+    SET action_plan_generation_status = 'NON_GENERE'
+    WHERE action_plan_generation_status IS NULL
   `);
 
   await db.exec(`

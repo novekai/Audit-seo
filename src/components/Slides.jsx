@@ -7,7 +7,8 @@ import {
     FileSpreadsheet,
     Link2,
     PlaySquare,
-    RefreshCw
+    RefreshCw,
+    X
 } from 'lucide-react';
 
 const SLIDES_STATUS_META = {
@@ -50,9 +51,12 @@ function Slides() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [submittingAuditId, setSubmittingAuditId] = useState(null);
+    const [submittingActionPlanAuditId, setSubmittingActionPlanAuditId] = useState(null);
     const [reviewingAuditId, setReviewingAuditId] = useState(null);
     const [pageError, setPageError] = useState('');
     const [pageNotice, setPageNotice] = useState('');
+    const [reviewPromptAuditId, setReviewPromptAuditId] = useState(null);
+    const [dismissedReviewPromptKeys, setDismissedReviewPromptKeys] = useState([]);
 
     const applyAuditUpdate = (audit) => {
         if (!audit) return;
@@ -64,6 +68,9 @@ function Slides() {
             current.map((item) => (item.id === auditId ? { ...item, ...patch } : item))
         );
     };
+
+    const getReviewPromptKey = (audit) =>
+        `${audit.id}:${audit.slides_generated_at || audit.google_slides_url || 'pending'}`;
 
     const fetchAudits = async ({ silent = false } = {}) => {
         if (silent) {
@@ -84,7 +91,9 @@ function Slides() {
 
             setAudits(data);
             setPageError('');
-            setPageNotice('');
+            if (!silent) {
+                setPageNotice('');
+            }
         } catch (err) {
             setPageNotice('');
             setPageError(err.message || 'Impossible de charger les audits');
@@ -98,6 +107,52 @@ function Slides() {
         fetchAudits();
     }, []);
 
+    useEffect(() => {
+        const hasPendingDeliverable = audits.some(
+            (audit) =>
+                audit.slides_generation_status === 'EN_COURS' ||
+                audit.action_plan_generation_status === 'EN_COURS'
+        );
+
+        if (!hasPendingDeliverable) {
+            return undefined;
+        }
+
+        const intervalId = window.setInterval(() => {
+            fetchAudits({ silent: true });
+        }, 10000);
+
+        return () => window.clearInterval(intervalId);
+    }, [audits]);
+
+    useEffect(() => {
+        if (!reviewPromptAuditId) {
+            return;
+        }
+
+        const currentAudit = audits.find((audit) => audit.id === reviewPromptAuditId);
+        if (!currentAudit || !currentAudit.google_slides_url || currentAudit.slides_review_confirmed_at) {
+            setReviewPromptAuditId(null);
+        }
+    }, [audits, reviewPromptAuditId]);
+
+    useEffect(() => {
+        if (reviewPromptAuditId) {
+            return;
+        }
+
+        const candidate = audits.find((audit) => (
+            audit.statut_global === 'TERMINE' &&
+            audit.google_slides_url &&
+            !audit.slides_review_confirmed_at &&
+            !dismissedReviewPromptKeys.includes(getReviewPromptKey(audit))
+        ));
+
+        if (candidate) {
+            setReviewPromptAuditId(candidate.id);
+        }
+    }, [audits, dismissedReviewPromptKeys, reviewPromptAuditId]);
+
     const handleGenerateSlides = async (audit) => {
         setSubmittingAuditId(audit.id);
         setPageError('');
@@ -105,7 +160,11 @@ function Slides() {
         applyAuditPatch(audit.id, {
             slides_generation_status: 'EN_COURS',
             slides_generation_error: null,
-            slides_review_confirmed_at: null
+            slides_review_confirmed_at: null,
+            google_action_plan_url: null,
+            action_plan_generation_status: 'NON_GENERE',
+            action_plan_generation_error: null,
+            action_plan_generated_at: null
         });
 
         try {
@@ -134,7 +193,11 @@ function Slides() {
             applyAuditPatch(audit.id, {
                 slides_generation_status: audit.slides_generation_status || 'NON_GENERE',
                 slides_generation_error: audit.slides_generation_error || null,
-                slides_review_confirmed_at: audit.slides_review_confirmed_at || null
+                slides_review_confirmed_at: audit.slides_review_confirmed_at || null,
+                google_action_plan_url: audit.google_action_plan_url || null,
+                action_plan_generation_status: audit.action_plan_generation_status || 'NON_GENERE',
+                action_plan_generation_error: audit.action_plan_generation_error || null,
+                action_plan_generated_at: audit.action_plan_generated_at || null
             });
             setPageNotice('');
             setPageError(err.message || 'La génération du Google Slides a échoué');
@@ -170,29 +233,90 @@ function Slides() {
                     ? 'Relecture du Google Slides confirmée.'
                     : 'Confirmation de relecture retirée.')
             );
+            return data.audit || { ...audit, slides_review_confirmed_at: confirmed ? new Date().toISOString() : null };
         } catch (err) {
             setPageNotice('');
             setPageError(err.message || 'Impossible de mettre à jour la confirmation de relecture');
+            return null;
         } finally {
             setReviewingAuditId(null);
         }
     };
 
+    const handleGenerateActionPlan = async (audit) => {
+        setSubmittingActionPlanAuditId(audit.id);
+        setPageError('');
+        setPageNotice('');
+        applyAuditPatch(audit.id, {
+            action_plan_generation_status: 'EN_COURS',
+            action_plan_generation_error: null
+        });
+
+        try {
+            const response = await fetch(`/api/audits/${audit.id}/generate-action-plan`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+
+            const data = await readJsonSafely(response);
+            if (!response.ok) {
+                if (data.audit) applyAuditUpdate(data.audit);
+                throw new Error(data.error || 'La génération du Google Sheet plan d’actions a échoué');
+            }
+
+            if (data.audit) {
+                applyAuditUpdate(data.audit);
+            }
+
+            setPageNotice(
+                data.message ||
+                (data.googleActionPlanUrl
+                    ? 'Google Sheet plan d’actions généré avec succès.'
+                    : 'Le Google Sheet plan d’actions est en cours de génération.')
+            );
+        } catch (err) {
+            applyAuditPatch(audit.id, {
+                action_plan_generation_status: audit.action_plan_generation_status || 'NON_GENERE',
+                action_plan_generation_error: audit.action_plan_generation_error || null,
+                google_action_plan_url: audit.google_action_plan_url || null,
+                action_plan_generated_at: audit.action_plan_generated_at || null
+            });
+            setPageNotice('');
+            setPageError(err.message || 'La génération du Google Sheet plan d’actions a échoué');
+        } finally {
+            setSubmittingActionPlanAuditId(null);
+        }
+    };
+
+    const dismissReviewPrompt = (audit) => {
+        if (!audit) {
+            setReviewPromptAuditId(null);
+            return;
+        }
+
+        const promptKey = getReviewPromptKey(audit);
+        setDismissedReviewPromptKeys((current) =>
+            current.includes(promptKey) ? current : [...current, promptKey]
+        );
+        setReviewPromptAuditId(null);
+    };
+
     const completedAudits = audits.filter((audit) => audit.statut_global === 'TERMINE');
     const pendingAudits = audits.filter((audit) => audit.statut_global !== 'TERMINE');
+    const reviewPromptAudit = audits.find((audit) => audit.id === reviewPromptAuditId) || null;
 
     if (loading) {
-        return <div className="py-20 text-center animate-pulse text-blue-600">Chargement des decks Slides...</div>;
+        return <div className="py-20 text-center animate-pulse text-blue-600">Chargement des livrables...</div>;
     }
 
     return (
         <div className="space-y-8">
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                 <div>
-                    <h3 className="text-xl font-semibold text-slate-900 mb-2">Génération des Google Slides</h3>
+                    <h3 className="text-xl font-semibold text-slate-900 mb-2">Livrables Module 2</h3>
                     <p className="text-sm text-slate-600 max-w-3xl">
-                        Lancez la création ou la mise à jour du deck depuis ici.
-                        Le lien Google Slides sera disponible une fois la génération terminée, ce qui peut prendre quelques minutes.
+                        Générez d’abord le Google Slides, validez sa relecture dans l’application,
+                        puis lancez le Google Sheet plan d’actions client généré directement par le backend.
                     </p>
                 </div>
 
@@ -236,11 +360,16 @@ function Slides() {
                         {completedAudits.map((audit) => {
                             const slidesStatus = audit.slides_generation_status || 'NON_GENERE';
                             const slidesMeta = SLIDES_STATUS_META[slidesStatus] || SLIDES_STATUS_META.NON_GENERE;
+                            const actionPlanStatus = audit.action_plan_generation_status || 'NON_GENERE';
+                            const actionPlanMeta = SLIDES_STATUS_META[actionPlanStatus] || SLIDES_STATUS_META.NON_GENERE;
                             const isSubmitting = submittingAuditId === audit.id;
                             const isGenerating = slidesStatus === 'EN_COURS';
+                            const isActionPlanSubmitting = submittingActionPlanAuditId === audit.id;
+                            const isActionPlanGenerating = actionPlanStatus === 'EN_COURS';
                             const isReviewing = reviewingAuditId === audit.id;
                             const hasSlidesLink = Boolean(audit.google_slides_url);
                             const hasSlidesReviewConfirmation = Boolean(audit.slides_review_confirmed_at);
+                            const hasActionPlanLink = Boolean(audit.google_action_plan_url);
 
                             return (
                                 <div key={audit.id} className="glass rounded-2xl p-6 border border-slate-200/80 shadow-sm">
@@ -259,7 +388,10 @@ function Slides() {
                                                     {audit.statut_global}
                                                 </span>
                                                 <span className={`inline-flex items-center rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${slidesMeta.className}`}>
-                                                    {slidesMeta.label}
+                                                    Slides · {slidesMeta.label}
+                                                </span>
+                                                <span className={`inline-flex items-center rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${actionPlanMeta.className}`}>
+                                                    Plan · {actionPlanMeta.label}
                                                 </span>
                                             </div>
                                         </div>
@@ -303,7 +435,7 @@ function Slides() {
 
                                             {!hasSlidesLink ? (
                                                 <p className="text-sm text-slate-600">
-                                                    Cette validation sera disponible dès que le Google Slides sera généré.
+                                                    Cette validation sera disponible dès que le Google Slides sera généré. Une fenêtre de confirmation apparaîtra alors pour guider la suite.
                                                 </p>
                                             ) : hasSlidesReviewConfirmation ? (
                                                 <div className="space-y-3">
@@ -356,19 +488,81 @@ function Slides() {
                                                     Cette étape sera disponible après la génération du Google Slides.
                                                 </p>
                                             ) : !hasSlidesReviewConfirmation ? (
-                                                <p className="text-sm text-slate-600">
-                                                    En attente de validation du Google Slides par le client.
-                                                </p>
+                                                <div className="space-y-3">
+                                                    <p className="text-sm text-slate-600">
+                                                        En attente de validation du Google Slides par le client.
+                                                    </p>
+                                                    <p className="text-xs text-slate-500">
+                                                        Le document contiendra la structure métier du cahier des charges: axe, action, description, priorité, impact, difficulté, données sources et commentaire.
+                                                    </p>
+                                                </div>
                                             ) : (
-                                                <p className="text-sm text-slate-700">
-                                                    Le dossier est prêt pour la prochaine étape.
-                                                </p>
+                                                <div className="space-y-3">
+                                                    {hasActionPlanLink ? (
+                                                        <>
+                                                            <a
+                                                                href={audit.google_action_plan_url}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className="block text-sm text-blue-600 hover:text-blue-700 break-all"
+                                                            >
+                                                                {audit.google_action_plan_url}
+                                                            </a>
+                                                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                                                                <Clock className="w-4 h-4" />
+                                                                Dernière génération le {formatDate(audit.action_plan_generated_at)}
+                                                            </div>
+                                                        </>
+                                                    ) : (
+                                                        <p className="text-sm text-slate-700">
+                                                            Le Google Sheet client peut maintenant être généré directement par le backend.
+                                                        </p>
+                                                    )}
+
+                                                    <div className="flex flex-col sm:flex-row gap-3">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleGenerateActionPlan(audit)}
+                                                            disabled={isActionPlanSubmitting || isActionPlanGenerating}
+                                                            className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-slate-900 text-white hover:bg-slate-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                                        >
+                                                            {isActionPlanSubmitting || isActionPlanGenerating ? (
+                                                                <RefreshCw className="w-4 h-4 animate-spin" />
+                                                            ) : (
+                                                                <FileSpreadsheet className="w-4 h-4" />
+                                                            )}
+                                                            {isActionPlanGenerating
+                                                                ? 'Génération en cours'
+                                                                : hasActionPlanLink
+                                                                    ? 'Mettre à jour le Google Sheet'
+                                                                    : 'Générer le Google Sheet'}
+                                                        </button>
+
+                                                        {hasActionPlanLink && (
+                                                            <a
+                                                                href={audit.google_action_plan_url}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl border border-slate-200 bg-white text-slate-700 hover:border-blue-200 hover:text-blue-600 transition-all shadow-sm"
+                                                            >
+                                                                <ExternalLink className="w-4 h-4" />
+                                                                Ouvrir le Google Sheet
+                                                            </a>
+                                                        )}
+                                                    </div>
+                                                </div>
                                             )}
                                         </div>
 
                                         {audit.slides_generation_error && (
                                             <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                                                 {audit.slides_generation_error}
+                                            </div>
+                                        )}
+
+                                        {audit.action_plan_generation_error && (
+                                            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                                                {audit.action_plan_generation_error}
                                             </div>
                                         )}
 
@@ -435,6 +629,71 @@ function Slides() {
                                 </p>
                             </div>
                         ))}
+                    </div>
+                </div>
+            )}
+
+            {reviewPromptAudit && (
+                <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/45 px-4">
+                    <div className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-blue-600">
+                                    Étape suivante
+                                </p>
+                                <h4 className="mt-2 text-2xl font-semibold text-slate-900">
+                                    Avez-vous terminé l’édition du Google Slides ?
+                                </h4>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={() => dismissReviewPrompt(reviewPromptAudit)}
+                                className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+                                aria-label="Fermer"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        <div className="mt-4 space-y-3 text-sm text-slate-600">
+                            <p>
+                                Une fois le deck relu et ajusté, vous pourrez générer le Google Sheet plan d’actions client.
+                            </p>
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                <p className="font-medium text-slate-900">{reviewPromptAudit.nom_site}</p>
+                                <p className="mt-1 text-xs text-slate-500 break-all">{reviewPromptAudit.google_slides_url}</p>
+                            </div>
+                        </div>
+
+                        <div className="mt-6 flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
+                            <button
+                                type="button"
+                                onClick={() => dismissReviewPrompt(reviewPromptAudit)}
+                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-slate-700 hover:border-slate-300 hover:bg-slate-50 transition-all"
+                            >
+                                Je continue l’édition
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={async () => {
+                                    const confirmedAudit = await handleSlidesReviewConfirmation(reviewPromptAudit, true);
+                                    if (confirmedAudit) {
+                                        setReviewPromptAuditId(null);
+                                    }
+                                }}
+                                disabled={reviewingAuditId === reviewPromptAudit.id}
+                                className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-white hover:bg-blue-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {reviewingAuditId === reviewPromptAudit.id ? (
+                                    <RefreshCw className="w-4 h-4 animate-spin" />
+                                ) : (
+                                    <CheckCircle2 className="w-4 h-4" />
+                                )}
+                                Oui, j’ai terminé
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

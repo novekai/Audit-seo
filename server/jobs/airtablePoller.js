@@ -2,7 +2,7 @@ import Airtable from 'airtable';
 import { auditQueue } from './queue.js';
 import { v4 as uuidv4 } from 'uuid';
 import { reconcileAuditCompletion, shouldIgnoreAirtableStatusRegression } from '../utils/auditStatus.js';
-import { readGeneratedSlidesUrl } from '../airtable.js';
+import { readGeneratedActionPlanUrl, readGeneratedSlidesUrl } from '../airtable.js';
 
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 const table = base(process.env.AIRTABLE_TABLE_ID);
@@ -66,6 +66,7 @@ async function syncAirtableToDb(io, db) {
             const sheetPlanUrl = record.get('Lien Google Sheet plan d\'action');
             const mrmReportUrl = record.get('Lien du rapport my ranking metrics');
             const generatedSlidesUrl = readGeneratedSlidesUrl(record);
+            const generatedActionPlanUrl = readGeneratedActionPlanUrl(record);
 
             // Check if already in DB
             const existing = await db.get('SELECT * FROM audits WHERE airtable_record_id = ?', [airtableId]);
@@ -81,6 +82,12 @@ async function syncAirtableToDb(io, db) {
                         localAudit.google_slides_url !== generatedSlidesUrl ||
                         localAudit.slides_generation_status !== 'PRET'
                     );
+                const hasActionPlanLinkUpdate =
+                    Boolean(generatedActionPlanUrl) &&
+                    (
+                        localAudit.google_action_plan_url !== generatedActionPlanUrl ||
+                        localAudit.action_plan_generation_status !== 'PRET'
+                    );
 
                 // 1. Bidirectional Sync: Only update if REALLY needed
                 const hasChanged =
@@ -90,6 +97,7 @@ async function syncAirtableToDb(io, db) {
                     localAudit.sheet_plan_url !== sheetPlanUrl ||
                     localAudit.mrm_report_url !== mrmReportUrl ||
                     hasSlidesLinkUpdate ||
+                    hasActionPlanLinkUpdate ||
                     (
                         localAudit.statut_global !== targetLocalStatus &&
                         !shouldIgnoreAirtableStatusRegression(localAudit.statut_global, targetLocalStatus)
@@ -110,6 +118,10 @@ async function syncAirtableToDb(io, db) {
                              slides_generation_status = ?,
                              slides_generation_error = ?,
                              slides_generated_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE slides_generated_at END,
+                             google_action_plan_url = ?,
+                             action_plan_generation_status = ?,
+                             action_plan_generation_error = ?,
+                             action_plan_generated_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE action_plan_generated_at END,
                              statut_global = ?
                          WHERE id = ?`,
                         [
@@ -122,6 +134,10 @@ async function syncAirtableToDb(io, db) {
                             hasSlidesLinkUpdate ? 'PRET' : localAudit.slides_generation_status,
                             hasSlidesLinkUpdate ? null : localAudit.slides_generation_error,
                             hasSlidesLinkUpdate,
+                            generatedActionPlanUrl || localAudit.google_action_plan_url,
+                            hasActionPlanLinkUpdate ? 'PRET' : localAudit.action_plan_generation_status,
+                            hasActionPlanLinkUpdate ? null : localAudit.action_plan_generation_error,
+                            hasActionPlanLinkUpdate,
                             shouldIgnoreAirtableStatusRegression(localAudit.statut_global, targetLocalStatus)
                                 ? localAudit.statut_global
                                 : targetLocalStatus,
@@ -140,6 +156,9 @@ async function syncAirtableToDb(io, db) {
                         google_slides_url: generatedSlidesUrl || localAudit.google_slides_url,
                         slides_generation_status: hasSlidesLinkUpdate ? 'PRET' : localAudit.slides_generation_status,
                         slides_generation_error: hasSlidesLinkUpdate ? null : localAudit.slides_generation_error,
+                        google_action_plan_url: generatedActionPlanUrl || localAudit.google_action_plan_url,
+                        action_plan_generation_status: hasActionPlanLinkUpdate ? 'PRET' : localAudit.action_plan_generation_status,
+                        action_plan_generation_error: hasActionPlanLinkUpdate ? null : localAudit.action_plan_generation_error,
                         statut_global: shouldIgnoreAirtableStatusRegression(localAudit.statut_global, targetLocalStatus)
                             ? localAudit.statut_global
                             : targetLocalStatus
@@ -248,7 +267,21 @@ async function syncAirtableToDb(io, db) {
 
             // 1. Create Local Audit
             await db.run(
-                'INSERT INTO audits (id, user_id, nom_site, url_site, sheet_audit_url, sheet_plan_url, mrm_report_url, airtable_record_id, statut_global) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                `INSERT INTO audits (
+                    id,
+                    user_id,
+                    nom_site,
+                    url_site,
+                    sheet_audit_url,
+                    sheet_plan_url,
+                    mrm_report_url,
+                    airtable_record_id,
+                    google_slides_url,
+                    slides_generation_status,
+                    google_action_plan_url,
+                    action_plan_generation_status,
+                    statut_global
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     auditId,
                     defaultUser.id,
@@ -258,6 +291,10 @@ async function syncAirtableToDb(io, db) {
                     record.get('Lien Google Sheet plan d\'action'),
                     record.get('Lien du rapport my ranking metrics'),
                     airtableId,
+                    generatedSlidesUrl,
+                    generatedSlidesUrl ? 'PRET' : 'NON_GENERE',
+                    generatedActionPlanUrl,
+                    generatedActionPlanUrl ? 'PRET' : 'NON_GENERE',
                     initialLocalStatus
                 ]
             );
@@ -298,6 +335,10 @@ async function syncAirtableToDb(io, db) {
                 user_id: defaultUser.id,
                 nom_site: siteName,
                 url_site: siteUrl,
+                google_slides_url: generatedSlidesUrl,
+                slides_generation_status: generatedSlidesUrl ? 'PRET' : 'NON_GENERE',
+                google_action_plan_url: generatedActionPlanUrl,
+                action_plan_generation_status: generatedActionPlanUrl ? 'PRET' : 'NON_GENERE',
                 statut_global: initialLocalStatus,
                 created_at: new Date().toISOString()
             });

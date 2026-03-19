@@ -3,6 +3,17 @@ import Airtable from 'airtable';
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 const table = base(process.env.AIRTABLE_TABLE_ID);
 export const GENERATED_SLIDES_FIELD_NAME = 'Document Slide Généré';
+export const GENERATED_ACTION_PLAN_FIELD_NAME =
+    process.env.AIRTABLE_GENERATED_ACTION_PLAN_FIELD_NAME ||
+    "Document Plan d'action Généré";
+
+const GENERATED_ACTION_PLAN_FIELD_CANDIDATES = Array.from(new Set([
+    GENERATED_ACTION_PLAN_FIELD_NAME,
+    "Document Plan d’actions Généré",
+    "Document Plan d'action Généré",
+    "Document Plan d’Action Généré",
+    "Document Plan d'Action Généré"
+].filter(Boolean)));
 
 function extractAirtableUrl(value, visited = new Set()) {
     if (!value) return null;
@@ -84,13 +95,28 @@ export async function getAirtableRecord(recordId) {
     return table.find(recordId);
 }
 
-export function readGeneratedSlidesUrl(record) {
+function readGeneratedUrlFromFields(record, fieldNames) {
     if (!record) return null;
 
-    const rawValue =
-        typeof record.get === 'function'
-            ? record.get(GENERATED_SLIDES_FIELD_NAME)
-            : record[GENERATED_SLIDES_FIELD_NAME];
+    for (const fieldName of fieldNames) {
+        const rawValue =
+            typeof record.get === 'function'
+                ? record.get(fieldName)
+                : record[fieldName];
 
-    return extractAirtableUrl(rawValue);
+        const url = extractAirtableUrl(rawValue);
+        if (url) {
+            return url;
+        }
+    }
+
+    return null;
+}
+
+export function readGeneratedSlidesUrl(record) {
+    return readGeneratedUrlFromFields(record, [GENERATED_SLIDES_FIELD_NAME]);
+}
+
+export function readGeneratedActionPlanUrl(record) {
+    return readGeneratedUrlFromFields(record, GENERATED_ACTION_PLAN_FIELD_CANDIDATES);
 }
