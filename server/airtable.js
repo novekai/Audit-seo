@@ -2,6 +2,44 @@ import Airtable from 'airtable';
 
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 const table = base(process.env.AIRTABLE_TABLE_ID);
+export const GENERATED_SLIDES_FIELD_NAME = 'Document Slide Généré';
+
+function extractAirtableUrl(value, visited = new Set()) {
+    if (!value) return null;
+
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        return trimmed || null;
+    }
+
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const match = extractAirtableUrl(item, visited);
+            if (match) return match;
+        }
+        return null;
+    }
+
+    if (typeof value === 'object') {
+        if (visited.has(value)) return null;
+        visited.add(value);
+
+        if (typeof value.url === 'string' && value.url.trim()) {
+            return value.url.trim();
+        }
+
+        if (typeof value.href === 'string' && value.href.trim()) {
+            return value.href.trim();
+        }
+
+        for (const nestedValue of Object.values(value)) {
+            const match = extractAirtableUrl(nestedValue, visited);
+            if (match) return match;
+        }
+    }
+
+    return null;
+}
 
 export async function createAirtableAudit(data) {
     const record = await table.create({
@@ -40,4 +78,19 @@ export async function updateAirtableField(recordId, fieldName, value) {
             console.warn(`[AIRTABLE] Field "${fieldName}" likely expects Attachment format. If you want a link, change the field type to "URL" or "Single line text" in Airtable.`);
         }
     }
+}
+
+export async function getAirtableRecord(recordId) {
+    return table.find(recordId);
+}
+
+export function readGeneratedSlidesUrl(record) {
+    if (!record) return null;
+
+    const rawValue =
+        typeof record.get === 'function'
+            ? record.get(GENERATED_SLIDES_FIELD_NAME)
+            : record[GENERATED_SLIDES_FIELD_NAME];
+
+    return extractAirtableUrl(rawValue);
 }

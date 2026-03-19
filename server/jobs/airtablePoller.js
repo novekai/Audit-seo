@@ -2,6 +2,7 @@ import Airtable from 'airtable';
 import { auditQueue } from './queue.js';
 import { v4 as uuidv4 } from 'uuid';
 import { reconcileAuditCompletion, shouldIgnoreAirtableStatusRegression } from '../utils/auditStatus.js';
+import { readGeneratedSlidesUrl } from '../airtable.js';
 
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 const table = base(process.env.AIRTABLE_TABLE_ID);
@@ -64,6 +65,7 @@ async function syncAirtableToDb(io, db) {
             const sheetAuditUrl = record.get('Lien Google Sheet');
             const sheetPlanUrl = record.get('Lien Google Sheet plan d\'action');
             const mrmReportUrl = record.get('Lien du rapport my ranking metrics');
+            const generatedSlidesUrl = readGeneratedSlidesUrl(record);
 
             // Check if already in DB
             const existing = await db.get('SELECT * FROM audits WHERE airtable_record_id = ?', [airtableId]);
@@ -73,6 +75,12 @@ async function syncAirtableToDb(io, db) {
 
                 // Determine what the target local status should be
                 const targetLocalStatus = mapAirtableStatusToLocalStatus(airtableStatus);
+                const hasSlidesLinkUpdate =
+                    Boolean(generatedSlidesUrl) &&
+                    (
+                        localAudit.google_slides_url !== generatedSlidesUrl ||
+                        localAudit.slides_generation_status !== 'PRET'
+                    );
 
                 // 1. Bidirectional Sync: Only update if REALLY needed
                 const hasChanged =
@@ -81,6 +89,7 @@ async function syncAirtableToDb(io, db) {
                     localAudit.sheet_audit_url !== sheetAuditUrl ||
                     localAudit.sheet_plan_url !== sheetPlanUrl ||
                     localAudit.mrm_report_url !== mrmReportUrl ||
+                    hasSlidesLinkUpdate ||
                     (
                         localAudit.statut_global !== targetLocalStatus &&
                         !shouldIgnoreAirtableStatusRegression(localAudit.statut_global, targetLocalStatus)
@@ -91,13 +100,28 @@ async function syncAirtableToDb(io, db) {
                     console.log(`[POLLER] Updating local record ${localAudit.id} (Airtable: ${airtableStatus})`);
 
                     await db.run(
-                        'UPDATE audits SET nom_site = ?, url_site = ?, sheet_audit_url = ?, sheet_plan_url = ?, mrm_report_url = ?, statut_global = ? WHERE id = ?',
+                        `UPDATE audits
+                         SET nom_site = ?,
+                             url_site = ?,
+                             sheet_audit_url = ?,
+                             sheet_plan_url = ?,
+                             mrm_report_url = ?,
+                             google_slides_url = ?,
+                             slides_generation_status = ?,
+                             slides_generation_error = ?,
+                             slides_generated_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE slides_generated_at END,
+                             statut_global = ?
+                         WHERE id = ?`,
                         [
                             siteName,
                             siteUrl,
                             sheetAuditUrl,
                             sheetPlanUrl,
                             mrmReportUrl,
+                            generatedSlidesUrl || localAudit.google_slides_url,
+                            hasSlidesLinkUpdate ? 'PRET' : localAudit.slides_generation_status,
+                            hasSlidesLinkUpdate ? null : localAudit.slides_generation_error,
+                            hasSlidesLinkUpdate,
                             shouldIgnoreAirtableStatusRegression(localAudit.statut_global, targetLocalStatus)
                                 ? localAudit.statut_global
                                 : targetLocalStatus,
@@ -113,6 +137,9 @@ async function syncAirtableToDb(io, db) {
                         sheet_audit_url: sheetAuditUrl,
                         sheet_plan_url: sheetPlanUrl,
                         mrm_report_url: mrmReportUrl,
+                        google_slides_url: generatedSlidesUrl || localAudit.google_slides_url,
+                        slides_generation_status: hasSlidesLinkUpdate ? 'PRET' : localAudit.slides_generation_status,
+                        slides_generation_error: hasSlidesLinkUpdate ? null : localAudit.slides_generation_error,
                         statut_global: shouldIgnoreAirtableStatusRegression(localAudit.statut_global, targetLocalStatus)
                             ? localAudit.statut_global
                             : targetLocalStatus

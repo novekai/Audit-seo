@@ -8,7 +8,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { encrypt } from './utils/encrypt.js';
-import { createAirtableAudit, updateAirtableStatut } from './airtable.js';
+import {
+    createAirtableAudit,
+    getAirtableRecord,
+    readGeneratedSlidesUrl,
+    updateAirtableStatut
+} from './airtable.js';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { auditQueue } from './jobs/queue.js';
@@ -36,6 +41,9 @@ const SECRET_KEY = process.env.JWT_SECRET || 'votre_cle_secrete_super_secure';
 const DEFAULT_GOOGLE_SLIDES_WEBHOOK_URL =
     process.env.GOOGLE_SLIDES_WEBHOOK_URL ||
     'https://primary-production-2eb79.up.railway.app/webhook/4f510189-32ea-4c74-af0f-2786b57308cf';
+const SLIDES_GENERATION_LOCK_TIMEOUT_MS = 15 * 60 * 1000;
+const SLIDES_AIRTABLE_POLL_INTERVAL_MS = 10000;
+const SLIDES_AIRTABLE_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 const GOOGLE_SLIDES_URL_REGEX = /https?:\/\/docs\.google\.com\/presentation\/d\/[^\s"'<>]+/i;
 const GOOGLE_SLIDES_ID_KEYS = new Set([
     'presentationid',
@@ -190,15 +198,129 @@ function buildSlidesAcceptedMessage(rawMessage) {
     return message;
 }
 
+function isSlidesGenerationLockStale(audit) {
+    if (!audit || audit.slides_generation_status !== 'EN_COURS' || !audit.updated_at) {
+        return false;
+    }
+
+    const updatedAtMs = new Date(audit.updated_at).getTime();
+    if (!Number.isFinite(updatedAtMs)) {
+        return false;
+    }
+
+    return Date.now() - updatedAtMs > SLIDES_GENERATION_LOCK_TIMEOUT_MS;
+}
+
+function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const activeSlidesAirtablePollers = new Map();
+
+async function syncSlidesLinkFromAirtable(auditId, airtableRecordId) {
+    const airtableRecord = await getAirtableRecord(airtableRecordId);
+    const googleSlidesUrl = readGeneratedSlidesUrl(airtableRecord);
+
+    if (!googleSlidesUrl) {
+        return null;
+    }
+
+    await db.run(
+        `UPDATE audits
+         SET google_slides_url = ?,
+             slides_generation_status = ?,
+             slides_generation_error = NULL,
+             slides_generated_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [googleSlidesUrl, 'PRET', auditId]
+    );
+
+    const updatedAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+    io.emit('audit:update', updatedAudit);
+    console.log(`[SLIDES] Google Slides link synced from Airtable for audit ${auditId}`);
+
+    return updatedAudit;
+}
+
+function watchSlidesLinkInAirtable(auditId, airtableRecordId) {
+    if (activeSlidesAirtablePollers.has(auditId)) {
+        return activeSlidesAirtablePollers.get(auditId);
+    }
+
+    const watcherPromise = (async () => {
+        const deadline = Date.now() + SLIDES_AIRTABLE_POLL_TIMEOUT_MS;
+
+        while (Date.now() < deadline) {
+            const currentAudit = await db.get(
+                'SELECT google_slides_url, slides_generation_status FROM audits WHERE id = ?',
+                [auditId]
+            );
+
+            if (!currentAudit) {
+                return null;
+            }
+
+            if (currentAudit.google_slides_url || currentAudit.slides_generation_status === 'PRET') {
+                return currentAudit;
+            }
+
+            if (currentAudit.slides_generation_status === 'ERREUR') {
+                return null;
+            }
+
+            try {
+                const updatedAudit = await syncSlidesLinkFromAirtable(auditId, airtableRecordId);
+                if (updatedAudit?.google_slides_url) {
+                    return updatedAudit;
+                }
+            } catch (err) {
+                console.error(`[SLIDES] Airtable polling error for audit ${auditId}:`, err.message);
+            }
+
+            await delay(SLIDES_AIRTABLE_POLL_INTERVAL_MS);
+        }
+
+        await db.run(
+            `UPDATE audits
+             SET slides_generation_status = ?,
+                 slides_generation_error = ?,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ? AND slides_generation_status = ?`,
+            [
+                'ERREUR',
+                'Le workflow Slides a été lancé, mais le champ Airtable "Document Slide Généré" n’a pas été renseigné dans le délai attendu.',
+                auditId,
+                'EN_COURS'
+            ]
+        );
+
+        const timeoutAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+        if (timeoutAudit) {
+            io.emit('audit:update', timeoutAudit);
+        }
+
+        console.warn(`[SLIDES] Airtable polling timed out for audit ${auditId}`);
+        return null;
+    })().finally(() => {
+        activeSlidesAirtablePollers.delete(auditId);
+    });
+
+    activeSlidesAirtablePollers.set(auditId, watcherPromise);
+    return watcherPromise;
+}
+
 async function triggerGoogleSlidesWebhook(recordId) {
     const webhookCandidates = buildSlidesWebhookCandidates(recordId);
     let lastError = null;
 
     for (const webhookUrl of webhookCandidates) {
+        console.log(`[SLIDES] Calling webhook: ${webhookUrl.toString()}`);
         const response = await fetch(webhookUrl, {
             method: 'GET',
             signal: AbortSignal.timeout(120000)
         });
+        console.log(`[SLIDES] Webhook response status: ${response.status}`);
 
         const rawText = await response.text();
         let payload = rawText;
@@ -562,10 +684,14 @@ app.post('/api/audits/:id/generate-slides', authenticateToken, async (req, res) 
             });
         }
 
-        if (effectiveAudit.slides_generation_status === 'EN_COURS') {
+        if (effectiveAudit.slides_generation_status === 'EN_COURS' && !isSlidesGenerationLockStale(effectiveAudit)) {
             return res.status(409).json({
                 error: 'Une génération Google Slides est déjà en cours pour cet audit.'
             });
+        }
+
+        if (isSlidesGenerationLockStale(effectiveAudit)) {
+            console.warn(`[SLIDES] Clearing stale generation lock for audit ${auditId}`);
         }
 
         await db.run(
@@ -585,6 +711,10 @@ app.post('/api/audits/:id/generate-slides', authenticateToken, async (req, res) 
             const { googleSlidesUrl, webhookUrl, asynchronous, message } = await triggerGoogleSlidesWebhook(effectiveAudit.airtable_record_id);
 
             if (asynchronous || !googleSlidesUrl) {
+                watchSlidesLinkInAirtable(auditId, effectiveAudit.airtable_record_id).catch((err) => {
+                    console.error(`[SLIDES] Background Airtable polling failed for audit ${auditId}:`, err.message);
+                });
+
                 return res.status(202).json({
                     message,
                     webhookUrl,
