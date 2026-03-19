@@ -361,7 +361,7 @@ function Slides() {
                                                 </p>
                                             ) : (
                                                 <p className="text-sm text-slate-700">
-                                                    Le dossier est prêt pour la prochaine étape. La génération automatique du Google Sheet plan d’actions client reste à développer.
+                                                    Le dossier est prêt pour la prochaine étape.
                                                 </p>
                                             )}
                                         </div>
