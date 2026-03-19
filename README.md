@@ -157,11 +157,15 @@ npm run dev
 # Build production
 npm run build
 
+# Réinitialiser complètement la base PostgreSQL configurée dans DATABASE_URL
+npm run db:reset
+
 # Lancer en production
 npm start
 ```
 
 > ⚠️ **PostgreSQL + Redis requis** : le backend dépend désormais de PostgreSQL pour les données applicatives et de Redis pour BullMQ.
+> Le reset supprime les tables applicatives (`users`, `audits`, `audit_steps`, `user_sessions`, `audit_events`) puis recrée le schéma.
 
 ## 📁 Structure du Projet
 
