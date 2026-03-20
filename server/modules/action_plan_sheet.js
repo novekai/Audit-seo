@@ -27,7 +27,7 @@ const AUDIT_RULE_TABS = [
     'Nb mots body'
 ];
 
-function createSheetsClient() {
+function createGoogleAuth() {
     if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.GOOGLE_REFRESH_TOKEN) {
         throw new Error('Les accès Google Sheets ne sont pas configurés côté backend.');
     }
@@ -38,7 +38,15 @@ function createSheetsClient() {
     );
 
     oauth2.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
-    return google.sheets({ version: 'v4', auth: oauth2 });
+    return oauth2;
+}
+
+function createSheetsClient(auth) {
+    return google.sheets({ version: 'v4', auth });
+}
+
+function createDriveClient(auth) {
+    return google.drive({ version: 'v3', auth });
 }
 
 function extractSpreadsheetId(url) {
@@ -422,7 +430,9 @@ export async function generateActionPlanSheet(audit) {
         throw new Error("Audit introuvable pour la génération du plan d'actions.");
     }
 
-    const sheets = createSheetsClient();
+    const auth = createGoogleAuth();
+    const sheets = createSheetsClient(auth);
+    const drive = createDriveClient(auth);
     const createResponse = await sheets.spreadsheets.create({
         requestBody: {
             properties: {
@@ -439,6 +449,20 @@ export async function generateActionPlanSheet(audit) {
 
     if (!spreadsheetId) {
         throw new Error("La création du Google Sheet plan d'actions a échoué.");
+    }
+
+    try {
+        await drive.permissions.create({
+            fileId: spreadsheetId,
+            requestBody: {
+                type: 'anyone',
+                role: 'writer'
+            }
+        });
+    } catch (err) {
+        throw new Error(
+            `Le Google Sheet a bien été créé, mais le partage public en écriture a échoué: ${err.message}`
+        );
     }
 
     const planValuesByTab = await loadValuesByTab(sheets, audit.sheet_plan_url, PLAN_SOURCE_TAB_NAMES);
