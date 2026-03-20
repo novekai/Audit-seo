@@ -928,68 +928,68 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
     }
 });
 
-// Retry failed steps of a completed/errored audit
-app.post('/api/audits/:id/retry-failed-steps', authenticateToken, async (req, res) => {
-    const userId = req.user.userId;
-    const auditId = req.params.id;
+// // Retry failed steps of a completed/errored audit
+// app.post('/api/audits/:id/retry-failed-steps', authenticateToken, async (req, res) => {
+//     const userId = req.user.userId;
+//     const auditId = req.params.id;
 
-    if (!db) {
-        return res.status(503).json({ error: 'Base de donn\u00e9es en cours de chargement' });
-    }
+//     if (!db) {
+//         return res.status(503).json({ error: 'Base de donn\u00e9es en cours de chargement' });
+//     }
 
-    try {
-        const audit = await db.get('SELECT * FROM audits WHERE id = ? AND user_id = ?', [auditId, userId]);
-        if (!audit) {
-            return res.status(404).json({ error: 'Audit non trouv\u00e9' });
-        }
+//     try {
+//         const audit = await db.get('SELECT * FROM audits WHERE id = ? AND user_id = ?', [auditId, userId]);
+//         if (!audit) {
+//             return res.status(404).json({ error: 'Audit non trouv\u00e9' });
+//         }
 
-        if (audit.statut_global === 'EN_COURS') {
-            return res.status(409).json({ error: "L'audit est d\u00e9j\u00e0 en cours d'ex\u00e9cution." });
-        }
+//         if (audit.statut_global === 'EN_COURS') {
+//             return res.status(409).json({ error: "L'audit est d\u00e9j\u00e0 en cours d'ex\u00e9cution." });
+//         }
 
-        const failedSteps = await db.all(
-            "SELECT step_key FROM audit_steps WHERE audit_id = ? AND statut IN ('FAILED', 'ERROR', 'ERREUR', 'EN_COURS')",
-            [auditId]
-        );
+//         const failedSteps = await db.all(
+//             "SELECT step_key FROM audit_steps WHERE audit_id = ? AND statut IN ('FAILED', 'ERROR', 'ERREUR', 'EN_COURS')",
+//             [auditId]
+//         );
 
-        if (!failedSteps || failedSteps.length === 0) {
-            return res.status(200).json({
-                message: 'Aucune \u00e9tape en \u00e9chec \u00e0 relancer.',
-                failedCount: 0
-            });
-        }
+//         if (!failedSteps || failedSteps.length === 0) {
+//             return res.status(200).json({
+//                 message: 'Aucune \u00e9tape en \u00e9chec \u00e0 relancer.',
+//                 failedCount: 0
+//             });
+//         }
 
-        await db.run(
-            "UPDATE audit_steps SET statut = 'EN_ATTENTE', resultat = NULL, output_cloudinary_url = NULL, updated_at = CURRENT_TIMESTAMP WHERE audit_id = ? AND statut IN ('FAILED', 'ERROR', 'ERREUR', 'EN_COURS')",
-            [auditId]
-        );
+//         await db.run(
+//             "UPDATE audit_steps SET statut = 'EN_ATTENTE', resultat = NULL, output_cloudinary_url = NULL, updated_at = CURRENT_TIMESTAMP WHERE audit_id = ? AND statut IN ('FAILED', 'ERROR', 'ERREUR', 'EN_COURS')",
+//             [auditId]
+//         );
 
-        await db.run(
-            "UPDATE audits SET statut_global = 'EN_ATTENTE', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            [auditId]
-        );
+//         await db.run(
+//             "UPDATE audits SET statut_global = 'EN_ATTENTE', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+//             [auditId]
+//         );
 
-        await auditQueue.add('audit', {
-            auditId: audit.id,
-            userId: audit.user_id
-        });
+//         await auditQueue.add('audit', {
+//             auditId: audit.id,
+//             userId: audit.user_id
+//         });
 
-        const updatedAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
-        io.emit('audit:update', updatedAudit);
+//         const updatedAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+//         io.emit('audit:update', updatedAudit);
 
-        console.log(`[RETRY] Re-queued audit ${auditId} with ${failedSteps.length} failed step(s)`);
+//         console.log(`[RETRY] Re-queued audit ${auditId} with ${failedSteps.length} failed step(s)`);
 
-        return res.json({
-            message: `${failedSteps.length} \u00e9tape(s) en \u00e9chec relanc\u00e9e(s).`,
-            failedCount: failedSteps.length,
-            failedSteps: failedSteps.map(s => s.step_key),
-            audit: updatedAudit
-        });
-    } catch (err) {
-        console.error('[RETRY] Error:', err);
-        return res.status(500).json({ error: 'Erreur serveur lors de la relance des \u00e9tapes \u00e9chou\u00e9es' });
-    }
-});
+//         return res.json({
+//             message: `${failedSteps.length} \u00e9tape(s) en \u00e9chec relanc\u00e9e(s).`,
+//             failedCount: failedSteps.length,
+//             failedSteps: failedSteps.map(s => s.step_key),
+//             audit: updatedAudit
+//         });
+//     } catch (err) {
+//         console.error('[RETRY] Error:', err);
+//         return res.status(500).json({ error: 'Erreur serveur lors de la relance des \u00e9tapes \u00e9chou\u00e9es' });
+//     }
+// });
 
 app.post('/api/audits/:id/generate-slides', authenticateToken, async (req, res) => {
     const userId = req.user.userId;

@@ -143,7 +143,7 @@ export const initWorker = (io, db) => {
             try {
                 console.log(`[WORKER] [JOB ${job.id}] Executing Step: Robots & Sitemap...`);
                 await updateStep('robots_txt', 'EN_COURS');
-                const robotsResult = await runStepWithRetry("Robots & Sitemap", () => auditRobotsSitemap(siteUrl, auditId), job.id);
+                const robotsResult = await auditRobotsSitemap(siteUrl, auditId);
 
                 await updateStep('robots_txt', robotsResult.robots_txt.statut, robotsResult.robots_txt.details, robotsResult.robots_txt.capture);
 
@@ -172,7 +172,7 @@ export const initWorker = (io, db) => {
                     }
                 }
             } catch (e) {
-                console.error(`[WORKER] [JOB ${job.id}] Robots/Sitemap step failed after retries:`, e.message);
+                console.error(`[WORKER] [JOB ${job.id}] Robots/Sitemap step failed:`, e.message);
                 await updateStep('robots_txt', 'FAILED', e.message);
                 await updateStep('sitemap', 'FAILED', e.message);
             }
@@ -229,10 +229,10 @@ export const initWorker = (io, db) => {
 
                 googleCookies = await getSessionCookies('google');
                 try {
-                    const planResults = await runStepWithRetry("Plan d'Action", () => runWithTimeout(
+                    const planResults = await runWithTimeout(
                         capturePlanDAction(sheetPlanUrl, auditId, googleCookies),
                         300000, "Plan d'Action Capture"
-                    ), job.id);
+                    );
 
                     for (const [fieldId, res] of Object.entries(planResults)) {
                         const stepKey = planStepsMap[fieldId];
@@ -259,7 +259,7 @@ export const initWorker = (io, db) => {
             if (await checkCancellation()) return;
             console.log(`[WORKER] [JOB ${job.id}] Executing Step: Logo Extraction...`);
             await updateStep('logo', 'IA_EN_COURS');
-            const logoResult = await runStepWithRetry("Logo", () => extractLogo(siteUrl, auditId), job.id);
+            const logoResult = await extractLogo(siteUrl, auditId);
 
             await updateStep('logo', logoResult.statut, logoResult.details, logoResult.url);
 
@@ -275,7 +275,7 @@ export const initWorker = (io, db) => {
             console.log(`[WORKER] [JOB ${job.id}] Executing Step: SSL Labs...`);
             await updateStep('ssl_labs', 'EN_COURS');
             const domainSsl = new URL(siteUrl).hostname;
-            const sslResult = await runStepWithRetry("SSL Labs", () => auditSslLabs(domainSsl, auditId), job.id);
+            const sslResult = await auditSslLabs(domainSsl, auditId);
             await updateStep('ssl_labs', sslResult.statut, null, sslResult.capture);
             if (audit.airtable_record_id && sslResult.capture) {
                 await updateAirtableField(audit.airtable_record_id, 'Img_SSL', sslResult.capture);
@@ -288,7 +288,7 @@ export const initWorker = (io, db) => {
                 await updateStep('ami_responsive', 'EN_COURS');
                 await updateStep('responsive_menu_mobile_1', 'EN_COURS');
                 await updateStep('responsive_menu_mobile_2', 'EN_COURS');
-                const respResult = await runStepWithRetry("Responsive", () => runWithTimeout(auditResponsive(siteUrl, auditId), 180000, 'Responsive'), job.id); // 3m
+                const respResult = await runWithTimeout(auditResponsive(siteUrl, auditId), 180000, 'Responsive'); // 3m
                 await updateStep('ami_responsive', respResult.statut, null, respResult.capture);
                 const mobileCapture1Step = buildDerivedCaptureStep(
                     respResult.menu_capture_1,
@@ -318,7 +318,7 @@ export const initWorker = (io, db) => {
                     }
                 }
             } catch (e) {
-                console.error(`[WORKER] [JOB ${job.id}] Responsive Check failed after retries:`, e.message);
+                console.error(`[WORKER] [JOB ${job.id}] Responsive Check failed:`, e.message);
                 await updateStep('ami_responsive', 'FAILED', e.message);
                 await updateStep('responsive_menu_mobile_1', 'FAILED', e.message);
                 await updateStep('responsive_menu_mobile_2', 'FAILED', e.message);
@@ -328,7 +328,7 @@ export const initWorker = (io, db) => {
             try {
                 console.log(`[WORKER] [JOB ${job.id}] Executing Step: PSI Mobile...`);
                 await updateStep('psi_mobile', 'EN_COURS');
-                const psiMobile = await runStepWithRetry("PSI Mobile", () => runWithTimeout(auditPageSpeedMobile(siteUrl, auditId), 180000, 'PSI Mobile'), job.id); // 3m
+                const psiMobile = await runWithTimeout(auditPageSpeedMobile(siteUrl, auditId), 180000, 'PSI Mobile'); // 3m
                 await updateStep('psi_mobile', psiMobile.statut, psiMobile.details, psiMobile.capture);
                 if (audit.airtable_record_id) {
                     if (psiMobile.score) {
@@ -338,7 +338,7 @@ export const initWorker = (io, db) => {
                     if (psiMobile.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PSI_Mobile', psiMobile.capture);
                 }
             } catch (e) {
-                console.error(`[WORKER] [JOB ${job.id}] PSI Mobile failed after retries:`, e.message);
+                console.error(`[WORKER] [JOB ${job.id}] PSI Mobile failed:`, e.message);
                 await updateStep('psi_mobile', 'FAILED', e.message);
             }
 
@@ -346,7 +346,7 @@ export const initWorker = (io, db) => {
             try {
                 console.log(`[WORKER] [JOB ${job.id}] Executing Step: PSI Desktop...`);
                 await updateStep('psi_desktop', 'EN_COURS');
-                const psiDesktop = await runStepWithRetry("PSI Desktop", () => runWithTimeout(auditPageSpeedDesktop(siteUrl, auditId), 180000, 'PSI Desktop'), job.id); // 3m
+                const psiDesktop = await runWithTimeout(auditPageSpeedDesktop(siteUrl, auditId), 180000, 'PSI Desktop'); // 3m
                 await updateStep('psi_desktop', psiDesktop.statut, psiDesktop.details, psiDesktop.capture);
                 if (audit.airtable_record_id) {
                     if (psiDesktop.score) {
@@ -356,7 +356,7 @@ export const initWorker = (io, db) => {
                     if (psiDesktop.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PSI_Desktop', psiDesktop.capture);
                 }
             } catch (e) {
-                console.error(`[WORKER] [JOB ${job.id}] PSI Desktop failed after retries:`, e.message);
+                console.error(`[WORKER] [JOB ${job.id}] PSI Desktop failed:`, e.message);
                 await updateStep('psi_desktop', 'FAILED', e.message);
             }
 
@@ -389,7 +389,7 @@ export const initWorker = (io, db) => {
                     await updateStep(stepKey, 'EN_COURS');
                 }
 
-                const sheetResults = await runStepWithRetry("Google Sheets Audit", () => auditGoogleSheetsAPI(sheetAuditUrl, null, auditId), job.id);
+                const sheetResults = await auditGoogleSheetsAPI(sheetAuditUrl, null, auditId);
 
                 for (const [fieldId, res] of Object.entries(sheetResults)) {
                     const stepKey = sheetStepsMap[fieldId];
@@ -412,7 +412,7 @@ export const initWorker = (io, db) => {
                 await updateStep('check_404', 'EN_COURS');
                 if (sheetAuditUrl) {
                     console.log(`[WORKER] [JOB ${job.id}] Starting 404 check...`);
-                    const res404 = await runStepWithRetry("Check 404", () => check404(sheetAuditUrl, auditId), job.id);
+                    const res404 = await check404(sheetAuditUrl, auditId);
                     await updateStep('check_404', res404.statut, res404.details, res404.capture);
                     if (audit.airtable_record_id) {
                         if (res404.capture) await updateAirtableField(audit.airtable_record_id, 'Img_404', res404.capture);
@@ -422,7 +422,7 @@ export const initWorker = (io, db) => {
                     await updateStep('check_404', 'SKIP', 'Lien Google Sheet non fourni');
                 }
             } catch (e) {
-                console.error(`[WORKER] [JOB ${job.id}] 404 Step failed after retries:`, e.message);
+                console.error(`[WORKER] [JOB ${job.id}] 404 Step failed:`, e.message);
                 await updateStep('check_404', 'FAILED', e.message);
             }
 
@@ -436,18 +436,18 @@ export const initWorker = (io, db) => {
                     await updateStep('gsc_https', 'SKIP', 'Session Google non connectée');
                 } else {
                     console.log(`[WORKER] [JOB ${job.id}] Executing Step: GSC Sitemaps...`);
-                    const gscSitRes = await runStepWithRetry("GSC Sitemaps", () => runWithTimeout(captureGscSitemaps(siteUrl, auditId, googleCookies), 240000, 'GSC Sitemaps'), job.id); // 4m
+                    const gscSitRes = await runWithTimeout(captureGscSitemaps(siteUrl, auditId, googleCookies), 240000, 'GSC Sitemaps'); // 4m
                     await updateStep('gsc_sitemaps', gscSitRes.statut, gscSitRes.details, gscSitRes.capture);
                     if (audit.airtable_record_id && gscSitRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_sitemap_declaré', gscSitRes.capture);
 
                     await updateStep('gsc_https', 'EN_COURS');
                     console.log(`[WORKER] [JOB ${job.id}] Executing Step: GSC HTTPS...`);
-                    const gscHttpsRes = await runStepWithRetry("GSC HTTPS", () => runWithTimeout(captureGscHttps(siteUrl, auditId, googleCookies), 240000, 'GSC HTTPS'), job.id); // 4m
+                    const gscHttpsRes = await runWithTimeout(captureGscHttps(siteUrl, auditId, googleCookies), 240000, 'GSC HTTPS'); // 4m
                     await updateStep('gsc_https', gscHttpsRes.statut, gscHttpsRes.details, gscHttpsRes.capture);
                     if (audit.airtable_record_id && gscHttpsRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_https', gscHttpsRes.capture);
                 }
             } catch (e) {
-                console.error(`[WORKER] [JOB ${job.id}] GSC Core steps failed after retries:`, e.message);
+                console.error(`[WORKER] [JOB ${job.id}] GSC Core steps failed:`, e.message);
                 await updateStep('gsc_sitemaps', 'FAILED', e.message);
             }
 
@@ -460,12 +460,12 @@ export const initWorker = (io, db) => {
                     await updateStep('mrm_profondeur', 'SKIP', !mrmCookies ? 'Session MRM non configurée' : 'Lien MRM non fourni');
                 } else {
                     console.log(`[WORKER] [JOB ${job.id}] Executing Step: MRM...`);
-                    const mrmRes = await runStepWithRetry("MRM", () => runWithTimeout(captureMrmProfondeur(audit.mrm_report_url, auditId, mrmCookies), 240000, 'MRM'), job.id); // 4m
+                    const mrmRes = await runWithTimeout(captureMrmProfondeur(audit.mrm_report_url, auditId, mrmCookies), 240000, 'MRM'); // 4m
                     await updateStep('mrm_profondeur', mrmRes.statut, mrmRes.details, mrmRes.capture);
                     if (audit.airtable_record_id && mrmRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_profondeur_clics', mrmRes.capture);
                 }
             } catch (e) {
-                console.error(`[WORKER] [JOB ${job.id}] MRM failed after retries:`, e.message);
+                console.error(`[WORKER] [JOB ${job.id}] MRM failed:`, e.message);
                 await updateStep('mrm_profondeur', 'FAILED', e.message);
             }
 
@@ -478,26 +478,26 @@ export const initWorker = (io, db) => {
                     await updateStep('ubersuggest_da', 'SKIP', 'Session Ubersuggest non configurée');
                 } else {
                     console.log(`[WORKER] [JOB ${job.id}] Executing Step: Ubersuggest...`);
-                    const uberRes = await runStepWithRetry("Ubersuggest", () => runWithTimeout(captureUbersuggest(siteUrl, auditId, uberCookies), 240000, 'Ubersuggest'), job.id); // 4m
+                    const uberRes = await runWithTimeout(captureUbersuggest(siteUrl, auditId, uberCookies), 240000, 'Ubersuggest'); // 4m
                     await updateStep('ubersuggest_da', uberRes.statut, uberRes.details, uberRes.capture);
                     if (audit.airtable_record_id && uberRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_autorité_domaine_UBERSUGGEST', uberRes.capture);
                 }
             } catch (e) {
-                console.error(`[WORKER] [JOB ${job.id}] Ubersuggest failed after retries:`, e.message);
+                console.error(`[WORKER] [JOB ${job.id}] Ubersuggest failed:`, e.message);
                 await updateStep('ubersuggest_da', 'FAILED', e.message);
             }
 
             // STEP 12: Semrush
             if (await checkCancellation()) return;
             await updateStep('semrush_authority', 'EN_COURS');
-            const semRes = await runStepWithRetry("Semrush", () => captureSemrush(siteUrl, auditId), job.id);
+            const semRes = await captureSemrush(siteUrl, auditId);
             await updateStep('semrush_authority', semRes.statut, semRes.details, semRes.capture);
             if (audit.airtable_record_id && semRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_autorité_domaine_SEMRUSH', semRes.capture);
 
             // STEP 13: Ahrefs
             if (await checkCancellation()) return;
             await updateStep('ahrefs_authority', 'EN_COURS');
-            const ahrRes = await runStepWithRetry("Ahrefs", () => captureAhrefs(siteUrl, auditId), job.id);
+            const ahrRes = await captureAhrefs(siteUrl, auditId);
             await updateStep('ahrefs_authority', ahrRes.statut, ahrRes.details, ahrRes.capture);
             if (audit.airtable_record_id && ahrRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_autorité_domaine_AHREF', ahrRes.capture);
 
@@ -509,7 +509,7 @@ export const initWorker = (io, db) => {
                 await updateStep('gsc_performance', 'EN_COURS');
                 await updateStep('gsc_meilleure_requete', 'EN_COURS');
                 await updateStep('gsc_query_page_clicks_impressions', 'EN_COURS');
-                const gscPerfRes = await runStepWithRetry("GSC Performance", () => captureGscPerformance(siteUrl, auditId, googleCookies), job.id);
+                const gscPerfRes = await captureGscPerformance(siteUrl, auditId, googleCookies);
                 await updateStep('gsc_performance', gscPerfRes.statut, gscPerfRes.details, gscPerfRes.capture1);
                 const bestQueryStep = buildDerivedCaptureStep(
                     gscPerfRes.bestQueryCapture,
@@ -538,7 +538,7 @@ export const initWorker = (io, db) => {
                 await updateStep('gsc_coverage', 'EN_COURS');
                 await updateStep('gsc_indexation_image', 'EN_COURS');
                 await updateStep('gsc_problemes_indexation', 'EN_COURS');
-                const gscCovRes = await runStepWithRetry("GSC Coverage", () => captureGscCoverage(siteUrl, auditId, googleCookies), job.id);
+                const gscCovRes = await captureGscCoverage(siteUrl, auditId, googleCookies);
                 await updateStep('gsc_coverage', gscCovRes.statut, gscCovRes.details, gscCovRes.capture);
                 const indexationStep = buildDerivedCaptureStep(
                     gscCovRes.indexationCapture,
@@ -563,7 +563,7 @@ export const initWorker = (io, db) => {
 
                 // STEP 17: GSC Top Pages (Meilleures pages)
                 await updateStep('gsc_top_pages', 'EN_COURS');
-                const gscTopRes = await runStepWithRetry("GSC Top Pages", () => captureGscTopPages(siteUrl, auditId, googleCookies), job.id);
+                const gscTopRes = await captureGscTopPages(siteUrl, auditId, googleCookies);
                 await updateStep('gsc_top_pages', gscTopRes.statut, gscTopRes.details, gscTopRes.capture);
                 if (audit.airtable_record_id && gscTopRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_meilleure_page', gscTopRes.capture);
             } else {
@@ -582,7 +582,7 @@ export const initWorker = (io, db) => {
 
             // STEP 18: Majestic Backlinks
             await updateStep('majestic_backlinks', 'EN_COURS');
-            const majRes = await runStepWithRetry("Majestic", () => captureMajesticBacklinks(siteUrl, auditId), job.id);
+            const majRes = await captureMajesticBacklinks(siteUrl, auditId);
             await updateStep('majestic_backlinks', majRes.statut, majRes.details, majRes.capture);
             if (audit.airtable_record_id && majRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_BACKLINKS', majRes.capture);
 
