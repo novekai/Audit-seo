@@ -6,7 +6,8 @@ import {
     Clock,
     ExternalLink,
     Bot,
-    PlaySquare
+    PlaySquare,
+    Trash2
 } from 'lucide-react';
 import { io } from 'socket.io-client';
 
@@ -239,6 +240,7 @@ const Progression = ({ onOpenSlides }) => {
     const [audits, setAudits] = useState([]);
     const [activeAudit, setActiveAudit] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [deletingAuditId, setDeletingAuditId] = useState(null);
 
     const fetchAudits = async () => {
         try {
@@ -270,6 +272,48 @@ const Progression = ({ onOpenSlides }) => {
             }
         } catch (err) {
             console.error('Err details:', err);
+        }
+    };
+
+    const handleDeleteAudit = async (audit) => {
+        if (!audit) return;
+
+        const confirmDelete = window.confirm(
+            `Supprimer définitivement l'audit "${audit.nom_site}" ?`
+        );
+
+        if (!confirmDelete) {
+            return;
+        }
+
+        setDeletingAuditId(audit.id);
+
+        try {
+            const response = await fetch(`/api/audits/${audit.id}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(data.error || 'Impossible de supprimer cet audit');
+            }
+
+            const updatedAudits = audits.filter((item) => item.id !== audit.id);
+            setAudits(updatedAudits);
+
+            if (activeAudit?.id === audit.id) {
+                const nextAudit = updatedAudits[0] || null;
+                if (nextAudit) {
+                    fetchAuditDetails(nextAudit.id);
+                } else {
+                    setActiveAudit(null);
+                }
+            }
+        } catch (err) {
+            window.alert(err.message || 'Impossible de supprimer cet audit');
+        } finally {
+            setDeletingAuditId(null);
         }
     };
 
@@ -324,6 +368,11 @@ const Progression = ({ onOpenSlides }) => {
                     steps: prev.steps.map(s => s.step_key === step.step_key ? { ...s, ...step } : s)
                 };
             });
+        });
+
+        socket.on('audit:deleted', ({ id }) => {
+            setAudits((prev) => prev.filter((audit) => audit.id !== id));
+            setActiveAudit((prev) => (prev?.id === id ? null : prev));
         });
 
         return () => socket.disconnect();
@@ -474,6 +523,22 @@ const Progression = ({ onOpenSlides }) => {
                                     <p className="text-sm text-slate-500 italic">Lancé le {new Date(activeAudit.created_at).toLocaleString()}</p>
                                 </div>
                                 <div className="flex gap-4">
+                                    <button
+                                        type="button"
+                                        onClick={() => handleDeleteAudit(activeAudit)}
+                                        disabled={deletingAuditId === activeAudit.id || ['EN_ATTENTE', 'EN_COURS'].includes(String(activeAudit.statut_global || '').toUpperCase())}
+                                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-600 transition-all hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                        title={['EN_ATTENTE', 'EN_COURS'].includes(String(activeAudit.statut_global || '').toUpperCase())
+                                            ? 'Suppression indisponible pendant le traitement'
+                                            : 'Supprimer cet audit'}
+                                    >
+                                        {deletingAuditId === activeAudit.id ? (
+                                            <RefreshCw className="w-4 h-4 animate-spin" />
+                                        ) : (
+                                            <Trash2 className="w-4 h-4" />
+                                        )}
+                                        Supprimer l’audit
+                                    </button>
                                     <div className="text-center px-4 py-2 bg-white/85 rounded-xl border border-slate-200 shadow-sm">
                                         <p className="text-[10px] text-slate-500 uppercase">Progression</p>
                                         <p className="text-lg font-bold text-blue-600">

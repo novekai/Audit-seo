@@ -95,6 +95,27 @@ export async function getAirtableRecord(recordId) {
     return table.find(recordId);
 }
 
+export async function deleteAirtableAudit(recordId) {
+    if (!recordId) return;
+
+    console.log(`[AIRTABLE] DELETE RECORD: ${recordId}`);
+    try {
+        await table.destroy(recordId);
+        console.log(`[AIRTABLE] SUCCESS: record ${recordId} deleted.`);
+    } catch (err) {
+        const isMissingRecord =
+            err?.statusCode === 404 ||
+            /not found/i.test(err?.message || '');
+
+        if (isMissingRecord) {
+            console.warn(`[AIRTABLE] Record ${recordId} already missing, continuing local deletion.`);
+            return;
+        }
+
+        throw err;
+    }
+}
+
 function readGeneratedUrlFromFields(record, fieldNames) {
     if (!record) return null;
 

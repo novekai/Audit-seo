@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { encrypt } from './utils/encrypt.js';
 import {
     createAirtableAudit,
+    deleteAirtableAudit,
     GENERATED_ACTION_PLAN_FIELD_NAME,
     getAirtableRecord,
     readGeneratedActionPlanUrl,
@@ -927,6 +928,69 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
     }
 });
 
+// Retry failed steps of a completed/errored audit
+app.post('/api/audits/:id/retry-failed-steps', authenticateToken, async (req, res) => {
+    const userId = req.user.userId;
+    const auditId = req.params.id;
+
+    if (!db) {
+        return res.status(503).json({ error: 'Base de donn\u00e9es en cours de chargement' });
+    }
+
+    try {
+        const audit = await db.get('SELECT * FROM audits WHERE id = ? AND user_id = ?', [auditId, userId]);
+        if (!audit) {
+            return res.status(404).json({ error: 'Audit non trouv\u00e9' });
+        }
+
+        if (audit.statut_global === 'EN_COURS') {
+            return res.status(409).json({ error: "L'audit est d\u00e9j\u00e0 en cours d'ex\u00e9cution." });
+        }
+
+        const failedSteps = await db.all(
+            "SELECT step_key FROM audit_steps WHERE audit_id = ? AND statut IN ('FAILED', 'ERROR', 'ERREUR', 'EN_COURS')",
+            [auditId]
+        );
+
+        if (!failedSteps || failedSteps.length === 0) {
+            return res.status(200).json({
+                message: 'Aucune \u00e9tape en \u00e9chec \u00e0 relancer.',
+                failedCount: 0
+            });
+        }
+
+        await db.run(
+            "UPDATE audit_steps SET statut = 'EN_ATTENTE', resultat = NULL, output_cloudinary_url = NULL, updated_at = CURRENT_TIMESTAMP WHERE audit_id = ? AND statut IN ('FAILED', 'ERROR', 'ERREUR', 'EN_COURS')",
+            [auditId]
+        );
+
+        await db.run(
+            "UPDATE audits SET statut_global = 'EN_ATTENTE', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            [auditId]
+        );
+
+        await auditQueue.add('audit', {
+            auditId: audit.id,
+            userId: audit.user_id
+        });
+
+        const updatedAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+        io.emit('audit:update', updatedAudit);
+
+        console.log(`[RETRY] Re-queued audit ${auditId} with ${failedSteps.length} failed step(s)`);
+
+        return res.json({
+            message: `${failedSteps.length} \u00e9tape(s) en \u00e9chec relanc\u00e9e(s).`,
+            failedCount: failedSteps.length,
+            failedSteps: failedSteps.map(s => s.step_key),
+            audit: updatedAudit
+        });
+    } catch (err) {
+        console.error('[RETRY] Error:', err);
+        return res.status(500).json({ error: 'Erreur serveur lors de la relance des \u00e9tapes \u00e9chou\u00e9es' });
+    }
+});
+
 app.post('/api/audits/:id/generate-slides', authenticateToken, async (req, res) => {
     const userId = req.user.userId;
     const auditId = req.params.id;
@@ -1169,7 +1233,28 @@ app.post('/api/audits/:id/generate-action-plan', authenticateToken, async (req, 
         io.emit('audit:update', pendingAudit);
 
         try {
-            const { spreadsheetUrl, sourceTabsCopied, actionCount } = await generateActionPlanSheet(audit);
+            // Retry up to 2 times with exponential backoff for transient Google API errors
+            const ACTION_PLAN_MAX_RETRIES = 2;
+            const ACTION_PLAN_RETRY_BASE_DELAY_MS = 5000;
+            let actionPlanResult;
+            let lastActionPlanErr;
+
+            for (let attempt = 0; attempt <= ACTION_PLAN_MAX_RETRIES; attempt++) {
+                try {
+                    actionPlanResult = await generateActionPlanSheet(audit);
+                    break;
+                } catch (retryErr) {
+                    lastActionPlanErr = retryErr;
+                    if (attempt < ACTION_PLAN_MAX_RETRIES) {
+                        const delayMs = ACTION_PLAN_RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+                        console.warn(`[ACTION PLAN] Attempt ${attempt + 1}/${ACTION_PLAN_MAX_RETRIES + 1} failed: ${retryErr.message}. Retrying in ${delayMs / 1000}s...`);
+                        await new Promise(r => setTimeout(r, delayMs));
+                    }
+                }
+            }
+
+            if (!actionPlanResult) throw lastActionPlanErr;
+            const { spreadsheetUrl, sourceTabsCopied, actionCount } = actionPlanResult;
 
             await db.run(
                 `UPDATE audits
@@ -1219,6 +1304,51 @@ app.post('/api/audits/:id/generate-action-plan', authenticateToken, async (req, 
         console.error('[ACTION PLAN] Generation error:', err);
         return res.status(500).json({
             error: 'Erreur serveur lors de la génération du Google Sheet plan d’actions'
+        });
+    }
+});
+
+app.delete('/api/audits/:id', authenticateToken, async (req, res) => {
+    const userId = req.user.userId;
+    const auditId = req.params.id;
+
+    if (!db) {
+        return res.status(503).json({ error: 'Base de données en cours de chargement' });
+    }
+
+    try {
+        const audit = await db.get('SELECT * FROM audits WHERE id = ? AND user_id = ?', [auditId, userId]);
+
+        if (!audit) {
+            return res.status(404).json({ error: 'Audit non trouvé' });
+        }
+
+        const isAuditRunning = ['EN_ATTENTE', 'EN_COURS'].includes(String(audit.statut_global || '').toUpperCase());
+        const isSlidesRunning = String(audit.slides_generation_status || '').toUpperCase() === 'EN_COURS';
+        const isActionPlanRunning = String(audit.action_plan_generation_status || '').toUpperCase() === 'EN_COURS';
+
+        if (isAuditRunning || isSlidesRunning || isActionPlanRunning) {
+            return res.status(409).json({
+                error: 'Suppression impossible pendant le traitement de l’audit ou la génération des livrables.'
+            });
+        }
+
+        if (audit.airtable_record_id) {
+            await deleteAirtableAudit(audit.airtable_record_id);
+        }
+
+        await db.run('DELETE FROM audits WHERE id = ? AND user_id = ?', [auditId, userId]);
+
+        io.emit('audit:deleted', { id: auditId });
+
+        return res.json({
+            message: 'Audit supprimé avec succès.',
+            id: auditId
+        });
+    } catch (err) {
+        console.error('[AUDIT] Delete error:', err);
+        return res.status(500).json({
+            error: 'Erreur serveur lors de la suppression de l’audit'
         });
     }
 });
