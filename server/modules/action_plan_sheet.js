@@ -425,7 +425,7 @@ async function loadValuesByTab(sheets, sheetUrl, tabNames) {
     return valuesByTab;
 }
 
-export async function generateActionPlanSheet(audit) {
+export async function generateActionPlanSheet(audit, email) {
     if (!audit) {
         throw new Error("Audit introuvable pour la génération du plan d'actions.");
     }
@@ -455,13 +455,15 @@ export async function generateActionPlanSheet(audit) {
         await drive.permissions.create({
             fileId: spreadsheetId,
             requestBody: {
-                type: 'anyone',
-                role: 'writer'
-            }
+                type: 'user',
+                role: 'writer',
+                emailAddress: email
+            },
+            sendNotificationEmail: true
         });
     } catch (err) {
         throw new Error(
-            `Le Google Sheet a bien été créé, mais le partage public en écriture a échoué: ${err.message}`
+            `Le Google Sheet a bien été créé, mais le partage avec ${email} a échoué: ${err.message}`
         );
     }
 

@@ -1210,9 +1210,16 @@ app.post('/api/audits/:id/generate-action-plan', authenticateToken, async (req, 
             });
         }
 
+        const { email } = req.body || {};
+        if (!email || typeof email !== 'string' || !email.trim()) {
+            return res.status(400).json({
+                error: "Une adresse e-mail est requise pour partager le Google Sheet plan d’actions."
+            });
+        }
+
         if (audit.action_plan_generation_status === 'EN_COURS' && !isActionPlanGenerationLockStale(audit)) {
             return res.status(409).json({
-                error: 'Une génération du Google Sheet plan d’actions est déjà en cours pour cet audit.'
+                error: "Une génération du Google Sheet plan d’actions est déjà en cours pour cet audit."
             });
         }
 
@@ -1241,7 +1248,7 @@ app.post('/api/audits/:id/generate-action-plan', authenticateToken, async (req, 
 
             for (let attempt = 0; attempt <= ACTION_PLAN_MAX_RETRIES; attempt++) {
                 try {
-                    actionPlanResult = await generateActionPlanSheet(audit);
+                    actionPlanResult = await generateActionPlanSheet(audit, email.trim());
                     break;
                 } catch (retryErr) {
                     lastActionPlanErr = retryErr;
