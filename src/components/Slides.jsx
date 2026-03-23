@@ -57,6 +57,8 @@ function Slides() {
     const [pageNotice, setPageNotice] = useState('');
     const [reviewPromptAuditId, setReviewPromptAuditId] = useState(null);
     const [dismissedReviewPromptKeys, setDismissedReviewPromptKeys] = useState([]);
+    const [emailPromptAudit, setEmailPromptAudit] = useState(null);
+    const [shareEmail, setShareEmail] = useState('');
 
     const applyAuditUpdate = (audit) => {
         if (!audit) return;
@@ -243,7 +245,7 @@ function Slides() {
         }
     };
 
-    const handleGenerateActionPlan = async (audit) => {
+    const handleGenerateActionPlan = async (audit, email) => {
         setSubmittingActionPlanAuditId(audit.id);
         setPageError('');
         setPageNotice('');
@@ -255,7 +257,9 @@ function Slides() {
         try {
             const response = await fetch(`/api/audits/${audit.id}/generate-action-plan`, {
                 method: 'POST',
-                credentials: 'include'
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ email })
             });
 
             const data = await readJsonSafely(response);
@@ -522,7 +526,7 @@ function Slides() {
                                                     <div className="flex flex-col sm:flex-row gap-3">
                                                         <button
                                                             type="button"
-                                                            onClick={() => handleGenerateActionPlan(audit)}
+                                                            onClick={() => { setShareEmail(''); setEmailPromptAudit(audit); }}
                                                             disabled={isActionPlanSubmitting || isActionPlanGenerating}
                                                             className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-slate-900 text-white hover:bg-slate-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                                         >
@@ -629,6 +633,76 @@ function Slides() {
                                 </p>
                             </div>
                         ))}
+                    </div>
+                </div>
+            )}
+
+            {emailPromptAudit && (
+                <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/45 px-4">
+                    <div className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-blue-600">
+                                    Partage du document
+                                </p>
+                                <h4 className="mt-2 text-2xl font-semibold text-slate-900">
+                                    Adresse e-mail du destinataire
+                                </h4>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setEmailPromptAudit(null)}
+                                className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+                                aria-label="Fermer"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        <div className="mt-4 space-y-3 text-sm text-slate-600">
+                            <p>
+                                Le Google Sheet plan d'actions sera partagé en édition avec cette adresse e-mail.
+                            </p>
+                            <input
+                                type="email"
+                                value={shareEmail}
+                                onChange={(e) => setShareEmail(e.target.value)}
+                                placeholder="exemple@domaine.com"
+                                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                                autoFocus
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && shareEmail.trim()) {
+                                        const audit = emailPromptAudit;
+                                        setEmailPromptAudit(null);
+                                        handleGenerateActionPlan(audit, shareEmail.trim());
+                                    }
+                                }}
+                            />
+                        </div>
+
+                        <div className="mt-6 flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setEmailPromptAudit(null)}
+                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-slate-700 hover:border-slate-300 hover:bg-slate-50 transition-all"
+                            >
+                                Annuler
+                            </button>
+
+                            <button
+                                type="button"
+                                disabled={!shareEmail.trim()}
+                                onClick={() => {
+                                    const audit = emailPromptAudit;
+                                    setEmailPromptAudit(null);
+                                    handleGenerateActionPlan(audit, shareEmail.trim());
+                                }}
+                                className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-white hover:bg-blue-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <FileSpreadsheet className="w-4 h-4" />
+                                Générer et partager
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
