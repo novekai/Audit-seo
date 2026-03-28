@@ -7,7 +7,7 @@ import { initDb } from './db.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
-import { encrypt } from './utils/encrypt.js';
+import { encrypt, decrypt } from './utils/encrypt.js';
 import {
     createAirtableAudit,
     deleteAirtableAudit,
@@ -832,6 +832,197 @@ app.delete('/api/sessions/delete/:service', authenticateToken, async (req, res) 
         res.json({ message: `Cookies ${service} supprimés` });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+
+// ── Service Credentials (auto-login for MRM, Ubersuggest) ───────────────
+app.post('/api/credentials/:service', authenticateToken, async (req, res) => {
+    const { service } = req.params;
+    const userId = req.user.userId;
+    if (!db) return res.status(503).json({ error: 'Base de données en cours de chargement' });
+
+    const validServices = ['mrm', 'ubersuggest'];
+    if (!validServices.includes(service)) {
+        return res.status(400).json({ error: `Service non supporté. Utilisez: ${validServices.join(', ')}` });
+    }
+
+    try {
+        const { email, password } = req.body;
+        if (!email || !password) {
+            return res.status(400).json({ error: 'Email et mot de passe requis.' });
+        }
+
+        const encryptedData = encrypt(JSON.stringify({ email, password }));
+        const credId = uuidv4();
+
+        // Upsert: delete existing then insert
+        await db.run('DELETE FROM service_credentials WHERE user_id = ? AND service = ?', [userId, service]);
+        await db.run(
+            'INSERT INTO service_credentials (id, user_id, service, auth_type, encrypted_data, status) VALUES (?, ?, ?, ?, ?, ?)',
+            [credId, userId, service, 'password', encryptedData, 'active']
+        );
+
+        console.log(`[CREDENTIALS] Saved credentials for ${service} (user: ${userId})`);
+        res.json({ message: `Identifiants ${service} enregistrés`, service });
+    } catch (err) {
+        console.error('[CREDENTIALS] Save error:', err);
+        res.status(500).json({ error: err.message || 'Erreur lors de l\'enregistrement' });
+    }
+});
+
+app.delete('/api/credentials/:service', authenticateToken, async (req, res) => {
+    const { service } = req.params;
+    const userId = req.user.userId;
+    if (!db) return res.status(503).json({ error: 'Base de données en cours de chargement' });
+
+    try {
+        await db.run('DELETE FROM service_credentials WHERE user_id = ? AND service = ?', [userId, service]);
+        console.log(`[CREDENTIALS] Deleted credentials for ${service} (user: ${userId})`);
+        res.json({ message: `Identifiants ${service} supprimés` });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/credentials/status', authenticateToken, async (req, res) => {
+    const userId = req.user.userId;
+    if (!db) return res.status(503).json({ error: 'Base de données en cours de chargement' });
+
+    try {
+        // Get credential-based services
+        const credentials = await db.all(
+            'SELECT service, auth_type, status, created_at, updated_at FROM service_credentials WHERE user_id = ? AND status = ?',
+            [userId, 'active']
+        );
+
+        // Get legacy cookie-based sessions
+        const sessions = await db.all(
+            'SELECT service, created_at FROM user_sessions WHERE user_id = ? ORDER BY created_at DESC',
+            [userId]
+        );
+
+        // Check Google GSC OAuth status (server-level, not per-user)
+        const googleConfigured = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN);
+
+        const result = [
+            {
+                service: 'google',
+                auth_type: 'oauth2',
+                status: googleConfigured ? 'active' : 'not_configured',
+                managed: 'server'
+            }
+        ];
+
+        // Add credential-based services
+        for (const cred of credentials) {
+            result.push({
+                service: cred.service,
+                auth_type: cred.auth_type,
+                status: cred.status,
+                created_at: cred.created_at,
+                updated_at: cred.updated_at,
+                managed: 'user'
+            });
+        }
+
+        // Add legacy cookie sessions (only if no credential exists for that service)
+        const credServices = new Set(credentials.map(c => c.service));
+        for (const sess of sessions) {
+            if (!credServices.has(sess.service) && sess.service !== 'google') {
+                result.push({
+                    service: sess.service,
+                    auth_type: 'cookies',
+                    status: 'active',
+                    created_at: sess.created_at,
+                    managed: 'user',
+                    legacy: true
+                });
+            }
+        }
+
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/credentials/test/:service', authenticateToken, async (req, res) => {
+    const { service } = req.params;
+    const userId = req.user.userId;
+    if (!db) return res.status(503).json({ error: 'Base de données en cours de chargement' });
+
+    const validServices = ['mrm', 'ubersuggest'];
+    if (!validServices.includes(service)) {
+        return res.status(400).json({ error: `Test non supporté pour: ${service}` });
+    }
+
+    try {
+        // Get credentials
+        const row = await db.get(
+            'SELECT encrypted_data FROM service_credentials WHERE user_id = ? AND service = ? AND status = ?',
+            [userId, service, 'active']
+        );
+
+        if (!row) {
+            return res.status(404).json({ error: `Aucun identifiant enregistré pour ${service}` });
+        }
+
+        const { email, password } = JSON.parse(decrypt(row.encrypted_data));
+
+        // Dynamic import to avoid loading Playwright on every request
+        const { chromium } = await import('playwright');
+        const browser = await chromium.launch({
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox']
+        });
+
+        try {
+            const context = await browser.newContext({
+                viewport: { width: 1400, height: 900 },
+                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                locale: 'fr-FR'
+            });
+            const page = await context.newPage();
+            page.setDefaultTimeout(30000);
+
+            if (service === 'mrm') {
+                await page.goto('https://myrankingmetrics.com/login', { waitUntil: 'domcontentloaded' });
+                await page.waitForTimeout(2000);
+                const emailInput = page.locator('input[name="email"], input[type="email"], input[name="_username"]').first();
+                await emailInput.fill(email);
+                const passwordInput = page.locator('input[name="password"], input[type="password"], input[name="_password"]').first();
+                await passwordInput.fill(password);
+                await page.locator('button[type="submit"], input[type="submit"]').first().click();
+                await page.waitForLoadState('domcontentloaded', { timeout: 15000 });
+                await page.waitForTimeout(3000);
+
+                if (page.url().includes('login') || page.url().includes('connexion')) {
+                    return res.json({ success: false, error: 'Login échoué — vérifiez vos identifiants' });
+                }
+            } else if (service === 'ubersuggest') {
+                await page.goto('https://app.neilpatel.com/en/login', { waitUntil: 'domcontentloaded' });
+                await page.waitForTimeout(2000);
+                const emailInput = page.locator('input[type="email"], input[name="email"]').first();
+                await emailInput.fill(email);
+                const passwordInput = page.locator('input[type="password"], input[name="password"]').first();
+                await passwordInput.fill(password);
+                await page.locator('button[type="submit"]').first().click();
+                await page.waitForLoadState('domcontentloaded', { timeout: 15000 });
+                await page.waitForTimeout(5000);
+
+                if (page.url().includes('login') || page.url().includes('signin')) {
+                    return res.json({ success: false, error: 'Login échoué — vérifiez vos identifiants' });
+                }
+            }
+
+            res.json({ success: true, message: `Connexion ${service} réussie !` });
+        } finally {
+            await browser.close();
+        }
+    } catch (err) {
+        console.error(`[CREDENTIALS] Test ${service} error:`, err.message);
+        res.json({ success: false, error: err.message });
     }
 });
 

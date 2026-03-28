@@ -26,16 +26,40 @@ async function cropWithAI(imagePath, prompt) {
     } catch (e) { return imagePath; }
 }
 
-// ── UBERSUGGEST — Domain Authority ───────────────────────────────────────────
-export async function captureUbersuggest(siteUrl, auditId, cookies) {
-    const result = { statut: 'ERROR', capture: null };
+// ── Auto-login via Playwright ─────────────────────────────────────────────────
+async function loginToUbersuggest(page, email, password) {
+    console.log(`[UBERSUGGEST] Auto-login with credentials for: ${email}`);
+    await page.goto('https://app.neilpatel.com/en/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(2000);
 
-    if (!cookies || !cookies.length) {
-        result.statut = 'SKIP';
-        result.details = 'Session Ubersuggest non configurée ou invalide';
-        return result;
+    // Fill email
+    const emailInput = page.locator('input[type="email"], input[name="email"]').first();
+    await emailInput.waitFor({ state: 'visible', timeout: 10000 });
+    await emailInput.fill(email);
+
+    // Fill password
+    const passwordInput = page.locator('input[type="password"], input[name="password"]').first();
+    await passwordInput.fill(password);
+
+    // Submit
+    const submitBtn = page.locator('button[type="submit"]').first();
+    await submitBtn.click();
+
+    // Wait for navigation after login
+    await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+    await page.waitForTimeout(5000);
+
+    // Verify login succeeded
+    const currentUrl = page.url();
+    if (currentUrl.includes('login') || currentUrl.includes('signin')) {
+        throw new Error(`Ubersuggest login failed — still on login page: ${currentUrl}`);
     }
 
+    console.log(`[UBERSUGGEST] Login successful — redirected to: ${currentUrl}`);
+}
+
+// ── Launch browser with appropriate auth method ───────────────────────────────
+async function launchWithAuth(authData) {
     const browser = await chromium.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox']
@@ -45,9 +69,37 @@ export async function captureUbersuggest(siteUrl, auditId, cookies) {
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         locale: 'fr-FR'
     });
-    await context.addCookies(sanitizeCookies(cookies));
     const page = await context.newPage();
     page.setDefaultTimeout(90000);
+
+    if (Array.isArray(authData)) {
+        // Legacy cookie mode
+        await context.addCookies(sanitizeCookies(authData));
+        console.log(`[UBERSUGGEST] Cookies injected: ${authData.length} cookies`);
+    } else if (authData?.email && authData?.password) {
+        // New auto-login mode
+        await loginToUbersuggest(page, authData.email, authData.password);
+    }
+
+    return { browser, context, page };
+}
+
+// ── UBERSUGGEST — Domain Authority ───────────────────────────────────────────
+export async function captureUbersuggest(siteUrl, auditId, authData) {
+    const result = { statut: 'ERROR', capture: null };
+
+    // Validate auth data
+    const hasAuth = Array.isArray(authData)
+        ? authData.length > 0
+        : (authData?.email && authData?.password);
+
+    if (!hasAuth) {
+        result.statut = 'SKIP';
+        result.details = 'Identifiants Ubersuggest non configurés';
+        return result;
+    }
+
+    const { browser, page } = await launchWithAuth(authData);
 
     try {
         // Navigate to Traffic Analyzer

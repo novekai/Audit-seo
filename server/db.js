@@ -142,6 +142,25 @@ export async function initDb() {
     ON user_sessions(user_id, service, created_at DESC)
   `);
 
+  // ── Service credentials table (auto-login for MRM, Ubersuggest) ──
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS service_credentials (
+      id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+      service TEXT NOT NULL,
+      auth_type TEXT NOT NULL DEFAULT 'password',
+      encrypted_data TEXT NOT NULL,
+      status TEXT DEFAULT 'active',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_service_credentials_user_service
+    ON service_credentials(user_id, service)
+  `);
+
   await db.exec(`
     ALTER TABLE audits
     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP

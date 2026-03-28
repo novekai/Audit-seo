@@ -5,7 +5,6 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { uploadToCloudinary } from '../utils/cloudinary.js';
 import { analyzeImage } from '../utils/openai.js';
-import { decrypt } from '../utils/encrypt.js';
 import { sanitizeCookies } from '../utils/cookies.js';
 
 // ── AI crop helper ────────────────────────────────────────────────────────────
@@ -31,16 +30,40 @@ async function cropWithAI(imagePath, prompt) {
     }
 }
 
-//  MY RANKING METRICS — Profondeur des pages
-export async function captureMrmProfondeur(mrmReportUrl, auditId, cookies) {
-    const result = { statut: 'ERROR', capture: null };
+// ── Auto-login via Playwright ─────────────────────────────────────────────────
+async function loginToMrm(page, email, password) {
+    console.log(`[MRM] Auto-login with credentials for: ${email}`);
+    await page.goto('https://myrankingmetrics.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(2000);
 
-    if (!cookies || !cookies.length) {
-        result.statut = 'SKIP';
-        result.details = 'Session MRM non configurée ou invalide';
-        return result;
+    // Fill email
+    const emailInput = page.locator('input[name="email"], input[type="email"], input[name="_username"]').first();
+    await emailInput.waitFor({ state: 'visible', timeout: 10000 });
+    await emailInput.fill(email);
+
+    // Fill password
+    const passwordInput = page.locator('input[name="password"], input[type="password"], input[name="_password"]').first();
+    await passwordInput.fill(password);
+
+    // Submit
+    const submitBtn = page.locator('button[type="submit"], input[type="submit"]').first();
+    await submitBtn.click();
+
+    // Wait for navigation after login
+    await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+    await page.waitForTimeout(3000);
+
+    // Verify login succeeded
+    const currentUrl = page.url();
+    if (currentUrl.includes('login') || currentUrl.includes('signin') || currentUrl.includes('connexion')) {
+        throw new Error(`MRM login failed — still on login page: ${currentUrl}`);
     }
 
+    console.log(`[MRM] Login successful — redirected to: ${currentUrl}`);
+}
+
+// ── Launch browser with appropriate auth method ───────────────────────────────
+async function launchWithAuth(authData) {
     const browser = await chromium.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox']
@@ -50,14 +73,41 @@ export async function captureMrmProfondeur(mrmReportUrl, auditId, cookies) {
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         locale: 'fr-FR'
     });
-    const cleanCookies = sanitizeCookies(cookies);
-    await context.addCookies(cleanCookies);
     const page = await context.newPage();
     page.setDefaultTimeout(90000);
 
+    if (Array.isArray(authData)) {
+        // Legacy cookie mode
+        const cleanCookies = sanitizeCookies(authData);
+        await context.addCookies(cleanCookies);
+        console.log(`[MRM] Cookies injected: ${authData.length} cookies`);
+    } else if (authData?.email && authData?.password) {
+        // New auto-login mode
+        await loginToMrm(page, authData.email, authData.password);
+    }
+
+    return { browser, context, page };
+}
+
+//  MY RANKING METRICS — Profondeur des pages
+export async function captureMrmProfondeur(mrmReportUrl, auditId, authData) {
+    const result = { statut: 'ERROR', capture: null };
+
+    // Validate auth data
+    const hasAuth = Array.isArray(authData)
+        ? authData.length > 0
+        : (authData?.email && authData?.password);
+
+    if (!hasAuth) {
+        result.statut = 'SKIP';
+        result.details = 'Identifiants MRM non configurés';
+        return result;
+    }
+
+    const { browser, page } = await launchWithAuth(authData);
+
     try {
         console.log(`[MRM] Navigating to: ${mrmReportUrl}`);
-        console.log(`[MRM] Cookies injected: ${cookies.length} cookies`);
         await page.goto(mrmReportUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
         await page.waitForTimeout(5000);
 
@@ -67,7 +117,7 @@ export async function captureMrmProfondeur(mrmReportUrl, auditId, cookies) {
         if (currentUrl.includes('login') || currentUrl.includes('signin') || currentUrl.includes('connexion')) {
             result.statut = 'SKIP';
             result.details = `Session MRM expirée — redirigé vers: ${currentUrl}`;
-            console.error(`[MRM] ❌ Session expired — redirected to: ${currentUrl}`);
+            console.error(`[MRM] Session expired — redirected to: ${currentUrl}`);
             return result;
         }
 
@@ -92,7 +142,7 @@ export async function captureMrmProfondeur(mrmReportUrl, auditId, cookies) {
                 console.log(`[MRM] Found depth table. Scrolling...`);
                 await tableEl.evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
                 await page.evaluate(() => window.scrollBy(0, -150));
-                console.log(`[MRM] ✅ Scrolled to Section 4 table.`);
+                console.log(`[MRM] Scrolled to Section 4 table.`);
             } else {
                 console.warn(`[MRM] Table not found with XPath, searching by class.`);
                 tableEl = page.locator('.tablecenter').first();
@@ -101,7 +151,7 @@ export async function captureMrmProfondeur(mrmReportUrl, auditId, cookies) {
 
             await page.waitForTimeout(3000);
         } catch (err) {
-            console.warn(`[MRM] ⚠️ Precise section 4 scrolling failed: ${err.message}.`);
+            console.warn(`[MRM] Precise section 4 scrolling failed: ${err.message}.`);
             await page.locator('table').first().scrollIntoViewIfNeeded().catch(() => { });
         }
 

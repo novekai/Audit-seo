@@ -1,74 +1,41 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Globe, Lock, CheckCircle2, AlertCircle, ClipboardPaste, Save, Trash2 } from 'lucide-react';
-
-const SERVICES = [
-    {
-        key: 'google',
-        title: 'Google (Search Console)',
-        icon: Globe,
-        loginUrl: 'https://search.google.com/search-console',
-        description: 'Nécessaire pour : Sitemaps déclarés, HTTPS, Google Sheets privés',
-        cookieDomain: '.google.com'
-    },
-    {
-        key: 'mrm',
-        title: 'My Ranking Metrics',
-        icon: Lock,
-        loginUrl: 'https://myrankingmetrics.com/login',
-        description: 'Nécessaire pour : Profondeur de clics, Codes HTTP',
-        cookieDomain: '.myrankingmetrics.com'
-    },
-    {
-        key: 'ubersuggest',
-        title: 'Ubersuggest',
-        icon: Lock,
-        loginUrl: 'https://app.neilpatel.com/en/login',
-        description: 'Nécessaire pour : Autorité de domaine',
-        cookieDomain: '.neilpatel.com'
-    }
-];
+import { Settings as SettingsIcon, Globe, Lock, CheckCircle2, AlertCircle, Save, Trash2, RefreshCw, Shield, Eye, EyeOff, Zap } from 'lucide-react';
 
 const Settings = () => {
-    const [connections, setConnections] = useState({});
-    const [cookieInputs, setCookieInputs] = useState({ google: '', mrm: '', ubersuggest: '' });
+    const [connections, setConnections] = useState([]);
+    const [credentialInputs, setCredentialInputs] = useState({
+        mrm: { email: '', password: '' },
+        ubersuggest: { email: '', password: '' }
+    });
+    const [showPassword, setShowPassword] = useState({ mrm: false, ubersuggest: false });
     const [saving, setSaving] = useState({});
+    const [testing, setTesting] = useState({});
     const [messages, setMessages] = useState({});
 
     const fetchStatus = async () => {
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch('/api/sessions/status', {
+            const res = await fetch('/api/credentials/status', {
                 headers: { 'Authorization': `Bearer ${token}` },
                 credentials: 'include'
             });
             if (res.ok) {
                 const data = await res.json();
-                const c = {};
-                data.forEach(s => { c[s.service] = { status: 'connected', createdAt: s.created_at }; });
-                setConnections(c);
+                setConnections(data);
             }
         } catch { }
     };
 
     useEffect(() => { fetchStatus(); }, []);
 
-    const saveCookies = async (service) => {
-        const raw = cookieInputs[service]?.trim();
-        if (!raw) {
-            setMessages(m => ({ ...m, [service]: { type: 'error', text: 'Collez les cookies JSON exportés depuis Cookie-Editor.' } }));
-            return;
-        }
+    const getServiceStatus = (service) => {
+        return connections.find(c => c.service === service);
+    };
 
-        // Validate JSON
-        let parsed;
-        try {
-            parsed = JSON.parse(raw);
-            if (!Array.isArray(parsed)) throw new Error('Format invalide');
-            if (parsed.length === 0) throw new Error('Aucun cookie trouvé');
-            // Quick sanity check
-            if (!parsed[0].name && !parsed[0].Name) throw new Error('Format non reconnu — utilisez Cookie-Editor');
-        } catch (e) {
-            setMessages(m => ({ ...m, [service]: { type: 'error', text: `JSON invalide : ${e.message}` } }));
+    const saveCredentials = async (service) => {
+        const { email, password } = credentialInputs[service];
+        if (!email?.trim() || !password?.trim()) {
+            setMessages(m => ({ ...m, [service]: { type: 'error', text: 'Email et mot de passe requis.' } }));
             return;
         }
 
@@ -77,16 +44,16 @@ const Settings = () => {
 
         try {
             const token = localStorage.getItem('token');
-            const res = await fetch(`/api/sessions/import/${service}`, {
+            const res = await fetch(`/api/credentials/${service}`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
                 credentials: 'include',
-                body: JSON.stringify({ cookies: parsed })
+                body: JSON.stringify({ email: email.trim(), password })
             });
             const data = await res.json();
             if (res.ok) {
-                setMessages(m => ({ ...m, [service]: { type: 'success', text: `✅ ${parsed.length} cookies enregistrés et chiffrés !` } }));
-                setCookieInputs(c => ({ ...c, [service]: '' }));
+                setMessages(m => ({ ...m, [service]: { type: 'success', text: 'Identifiants enregistrés et chiffrés !' } }));
+                setCredentialInputs(c => ({ ...c, [service]: { email: '', password: '' } }));
                 fetchStatus();
             } else {
                 setMessages(m => ({ ...m, [service]: { type: 'error', text: data.error } }));
@@ -98,24 +65,107 @@ const Settings = () => {
         }
     };
 
-    const deleteCookies = async (service) => {
-        if (!confirm(`Supprimer les cookies ${service} ?`)) return;
+    const deleteCredentials = async (service) => {
+        if (!confirm(`Supprimer les identifiants ${service} ?`)) return;
         try {
             const token = localStorage.getItem('token');
-            await fetch(`/api/sessions/delete/${service}`, {
+            // Delete credentials
+            await fetch(`/api/credentials/${service}`, {
                 method: 'DELETE',
                 headers: { 'Authorization': `Bearer ${token}` },
                 credentials: 'include'
             });
-            setConnections(c => { const n = { ...c }; delete n[service]; return n; });
-            setMessages(m => ({ ...m, [service]: { type: 'success', text: 'Cookies supprimés.' } }));
+            // Also delete legacy cookies if any
+            await fetch(`/api/sessions/delete/${service}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` },
+                credentials: 'include'
+            }).catch(() => {});
+            setMessages(m => ({ ...m, [service]: { type: 'success', text: 'Identifiants supprimés.' } }));
+            fetchStatus();
         } catch { }
     };
 
-    const ServiceCard = ({ svc }) => {
-        const conn = connections[svc.key];
-        const msg = messages[svc.key];
-        const isSaving = saving[svc.key];
+    const testCredentials = async (service) => {
+        setTesting(t => ({ ...t, [service]: true }));
+        setMessages(m => ({ ...m, [service]: null }));
+
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch(`/api/credentials/test/${service}`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` },
+                credentials: 'include'
+            });
+            const data = await res.json();
+            if (data.success) {
+                setMessages(m => ({ ...m, [service]: { type: 'success', text: data.message } }));
+            } else {
+                setMessages(m => ({ ...m, [service]: { type: 'error', text: data.error || 'Test échoué' } }));
+            }
+        } catch {
+            setMessages(m => ({ ...m, [service]: { type: 'error', text: 'Erreur réseau' } }));
+        } finally {
+            setTesting(t => ({ ...t, [service]: false }));
+        }
+    };
+
+    // ── Google Card (OAuth2, server-managed) ──
+    const GoogleCard = () => {
+        const status = getServiceStatus('google');
+        const isActive = status?.status === 'active';
+
+        return (
+            <div className="glass rounded-xl p-6 border border-slate-200/80 hover:border-blue-200 transition-all lg:col-span-3">
+                <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center border border-blue-100">
+                            <Globe className="w-5 h-5 text-blue-500" />
+                        </div>
+                        <div>
+                            <h3 className="font-semibold text-slate-900">Google Search Console</h3>
+                            <p className="text-xs text-slate-500">Sitemaps, HTTPS, Performance, Indexation, Meilleures pages</p>
+                        </div>
+                    </div>
+                    <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                        isActive
+                            ? 'bg-green-500/10 text-green-500 border border-green-500/20'
+                            : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+                    }`}>
+                        {isActive ? <CheckCircle2 className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                        {isActive ? 'Connecté via OAuth2' : 'Non configuré'}
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-3 px-4 py-3 bg-blue-50/60 rounded-lg border border-blue-100">
+                    <Shield className="w-5 h-5 text-blue-500 shrink-0" />
+                    <div className="text-sm text-slate-600">
+                        {isActive ? (
+                            <>
+                                La connexion Google Search Console est <strong className="text-slate-900">gérée automatiquement</strong> via OAuth2.
+                                Plus besoin d'exporter vos cookies — la connexion ne expire jamais.
+                            </>
+                        ) : (
+                            <>
+                                Les variables <code className="text-xs bg-white px-1 py-0.5 rounded">GOOGLE_CLIENT_ID</code>, <code className="text-xs bg-white px-1 py-0.5 rounded">GOOGLE_CLIENT_SECRET</code> et <code className="text-xs bg-white px-1 py-0.5 rounded">GOOGLE_REFRESH_TOKEN</code> doivent être configurées sur le serveur.
+                            </>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    // ── Credential Card (MRM, Ubersuggest) ──
+    const CredentialCard = ({ service, title, icon: Icon, loginUrl, description }) => {
+        const status = getServiceStatus(service);
+        const isConnected = status?.status === 'active';
+        const isLegacy = status?.legacy;
+        const msg = messages[service];
+        const isSaving = saving[service];
+        const isTesting = testing[service];
+        const input = credentialInputs[service];
+        const showPwd = showPassword[service];
 
         return (
             <div className="glass rounded-xl p-6 border border-slate-200/80 hover:border-blue-200 transition-all">
@@ -123,64 +173,110 @@ const Settings = () => {
                 <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center border border-blue-100">
-                            <svc.icon className="w-5 h-5 text-blue-500" />
+                            <Icon className="w-5 h-5 text-blue-500" />
                         </div>
                         <div>
-                            <h3 className="font-semibold text-slate-900">{svc.title}</h3>
-                            <p className="text-xs text-slate-500">{svc.description}</p>
+                            <h3 className="font-semibold text-slate-900">{title}</h3>
+                            <p className="text-xs text-slate-500">{description}</p>
                         </div>
                     </div>
-                    {conn && (
-                        <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-green-500/10 text-green-400 border border-green-500/20">
+                    {isConnected && (
+                        <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                            isLegacy
+                                ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+                                : 'bg-green-500/10 text-green-500 border border-green-500/20'
+                        }`}>
                             <CheckCircle2 className="w-3 h-3" />
-                            Connecté
+                            {isLegacy ? 'Cookies (ancien)' : 'Connecté'}
                         </div>
                     )}
                 </div>
 
                 {/* Connection info */}
-                {conn && (
+                {isConnected && (
                     <div className="flex items-center justify-between mb-3 px-3 py-2 bg-green-500/5 rounded-lg border border-green-500/10">
-                        <span className="text-xs text-green-400">
-                            Importé le {new Date(conn.createdAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                        <button onClick={() => deleteCookies(svc.key)} className="text-red-400 hover:text-red-300 transition-colors" title="Supprimer">
-                            <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center gap-2">
+                            <Zap className="w-3.5 h-3.5 text-green-500" />
+                            <span className="text-xs text-green-600">
+                                {isLegacy
+                                    ? 'Cookies importés (ancien système)'
+                                    : `Configuré le ${new Date(status.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}`
+                                }
+                            </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => testCredentials(service)}
+                                disabled={isTesting || isLegacy}
+                                className="text-blue-500 hover:text-blue-400 transition-colors disabled:opacity-40"
+                                title="Tester la connexion"
+                            >
+                                <RefreshCw className={`w-3.5 h-3.5 ${isTesting ? 'animate-spin' : ''}`} />
+                            </button>
+                            <button
+                                onClick={() => deleteCredentials(service)}
+                                className="text-red-400 hover:text-red-300 transition-colors"
+                                title="Supprimer"
+                            >
+                                <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                        </div>
                     </div>
                 )}
 
-                {/* Cookie input */}
+                {/* Credential input form */}
                 <div className="space-y-3">
                     <div className="flex items-center gap-2 text-xs text-slate-500">
-                        <ClipboardPaste className="w-3.5 h-3.5" />
+                        <Lock className="w-3.5 h-3.5" />
                         <span>
-                            Connectez-vous sur <a href={svc.loginUrl} target="_blank" rel="noopener" className="text-blue-500 hover:underline">{svc.loginUrl}</a> puis exportez vos cookies avec Cookie-Editor
+                            Entrez vos identifiants <a href={loginUrl} target="_blank" rel="noopener" className="text-blue-500 hover:underline">{title}</a> — connexion automatique à chaque audit
                         </span>
                     </div>
 
-                    <textarea
-                        className="w-full h-24 bg-white/90 border border-slate-200 rounded-lg p-3 text-xs font-mono text-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-400 resize-none shadow-sm"
-                        placeholder='[{"name": "SID", "value": "...", "domain": ".google.com", ...}]'
-                        value={cookieInputs[svc.key]}
-                        onChange={e => setCookieInputs(c => ({ ...c, [svc.key]: e.target.value }))}
+                    <input
+                        type="email"
+                        className="w-full bg-white/90 border border-slate-200 rounded-lg p-3 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-400 shadow-sm"
+                        placeholder="Email de connexion"
+                        value={input.email}
+                        onChange={e => setCredentialInputs(c => ({ ...c, [service]: { ...c[service], email: e.target.value } }))}
                     />
 
+                    <div className="relative">
+                        <input
+                            type={showPwd ? 'text' : 'password'}
+                            className="w-full bg-white/90 border border-slate-200 rounded-lg p-3 pr-10 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-400 shadow-sm"
+                            placeholder="Mot de passe"
+                            value={input.password}
+                            onChange={e => setCredentialInputs(c => ({ ...c, [service]: { ...c[service], password: e.target.value } }))}
+                        />
+                        <button
+                            type="button"
+                            onClick={() => setShowPassword(s => ({ ...s, [service]: !s[service] }))}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        >
+                            {showPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                    </div>
+
                     <button
-                        onClick={() => saveCookies(svc.key)}
-                        disabled={isSaving || !cookieInputs[svc.key]?.trim()}
+                        onClick={() => saveCredentials(service)}
+                        disabled={isSaving || !input.email?.trim() || !input.password?.trim()}
                         className="w-full py-2.5 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-blue-200/80"
                     >
                         {isSaving ? (
                             <>Enregistrement...</>
                         ) : (
-                            <><Save className="w-4 h-4" /> Enregistrer les cookies</>
+                            <><Save className="w-4 h-4" /> Enregistrer les identifiants</>
                         )}
                     </button>
 
                     {/* Message */}
                     {msg && (
-                        <div className={`text-xs px-3 py-2 rounded-lg ${msg.type === 'success' ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+                        <div className={`text-xs px-3 py-2 rounded-lg ${
+                            msg.type === 'success'
+                                ? 'bg-green-500/10 text-green-500 border border-green-500/20'
+                                : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                        }`}>
                             {msg.text}
                         </div>
                     )}
@@ -196,35 +292,48 @@ const Settings = () => {
                     <SettingsIcon className="w-6 h-6 text-blue-500" />
                 </div>
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-900">Import de sessions</h1>
-                    <p className="text-slate-600">Importez vos cookies pour activer les modules d'audit avancés</p>
+                    <h1 className="text-2xl font-bold text-slate-900">Connexions aux services</h1>
+                    <p className="text-slate-600">Configurez vos connexions pour activer les modules d'audit avancés</p>
                 </div>
             </div>
 
-            {/* Instructions */}
+            {/* Info banner */}
             <div className="glass rounded-2xl p-6 border border-blue-100 bg-blue-50/60">
                 <div className="flex gap-4">
                     <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center shrink-0 mt-0.5 border border-blue-100">
-                        <AlertCircle className="w-5 h-5 text-blue-500" />
+                        <Shield className="w-5 h-5 text-blue-500" />
                     </div>
-                    <div className="space-y-3">
-                        <h4 className="font-semibold text-slate-900">Comment importer vos cookies ?</h4>
-                        <ol className="text-sm text-slate-600 leading-relaxed space-y-1.5 list-decimal list-inside">
-                            <li>Installez l'extension Chrome <a href="https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm" target="_blank" rel="noopener" className="text-blue-500 hover:underline font-medium">Cookie-Editor</a> (gratuit)</li>
-                            <li>Connectez-vous sur le site du service (Google, MRM, Ubersuggest)</li>
-                            <li>Cliquez sur l'icône Cookie-Editor → <strong className="text-slate-900">Export</strong></li>
-                            <li>Collez le JSON dans le champ ci-dessous → <strong className="text-slate-900">Enregistrer</strong></li>
-                        </ol>
-                        <p className="text-xs text-slate-500">
-                            🔒 Vos cookies sont chiffrés en AES-256 avant stockage. Ils servent uniquement à naviguer sur les sites d'audit. Vos mots de passe ne sont jamais stockés.
+                    <div className="space-y-2">
+                        <h4 className="font-semibold text-slate-900">Connexion automatique</h4>
+                        <p className="text-sm text-slate-600 leading-relaxed">
+                            Vos identifiants sont chiffrés en <strong>AES-256</strong> avant stockage.
+                            La plateforme se connecte automatiquement aux services avant chaque audit — plus besoin d'exporter vos cookies manuellement.
                         </p>
                     </div>
                 </div>
             </div>
 
-            {/* Service Cards */}
+            {/* Google Card (full width) */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {SERVICES.map(svc => <ServiceCard key={svc.key} svc={svc} />)}
+                <GoogleCard />
+            </div>
+
+            {/* MRM & Ubersuggest Cards */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <CredentialCard
+                    service="mrm"
+                    title="My Ranking Metrics"
+                    icon={Lock}
+                    loginUrl="https://myrankingmetrics.com/login"
+                    description="Profondeur de clics, Codes HTTP"
+                />
+                <CredentialCard
+                    service="ubersuggest"
+                    title="Ubersuggest"
+                    icon={Lock}
+                    loginUrl="https://app.neilpatel.com/en/login"
+                    description="Autorité de domaine"
+                />
             </div>
         </div>
     );
