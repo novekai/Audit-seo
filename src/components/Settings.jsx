@@ -143,7 +143,6 @@ const Settings = () => {
                         {isActive ? (
                             <>
                                 La connexion Google Search Console est <strong className="text-slate-900">gérée automatiquement</strong> via OAuth2.
-                                Plus besoin d'exporter vos cookies — la connexion ne expire jamais.
                             </>
                         ) : (
                             <>
