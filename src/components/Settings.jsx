@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Globe, Lock, CheckCircle2, AlertCircle, Save, Trash2, RefreshCw, Shield, Eye, EyeOff, Zap } from 'lucide-react';
+import { Settings as SettingsIcon, Globe, Lock, CheckCircle2, AlertCircle, Save, Trash2, RefreshCw, Shield, Eye, EyeOff, Zap, LogIn, LogOut } from 'lucide-react';
 
 const Settings = () => {
     const [connections, setConnections] = useState([]);
@@ -26,7 +26,26 @@ const Settings = () => {
         } catch { }
     };
 
-    useEffect(() => { fetchStatus(); }, []);
+    useEffect(() => {
+        fetchStatus();
+        // Handle Google OAuth callback redirect
+        const params = new URLSearchParams(window.location.search);
+        const googleAuth = params.get('google_auth');
+        if (googleAuth === 'success') {
+            setMessages(m => ({ ...m, google: { type: 'success', text: 'Compte Google connecte avec succes !' } }));
+            window.history.replaceState({}, '', window.location.pathname);
+        } else if (googleAuth === 'error') {
+            const reason = params.get('reason') || 'unknown';
+            const reasons = {
+                denied: 'Vous avez refuse la connexion.',
+                no_refresh_token: 'Aucun token obtenu. Essayez de revoquer l\'acces dans votre compte Google puis reconnectez.',
+                expired: 'Le lien a expire. Veuillez reessayer.',
+                server_error: 'Erreur serveur. Veuillez reessayer.'
+            };
+            setMessages(m => ({ ...m, google: { type: 'error', text: reasons[reason] || 'Erreur inconnue.' } }));
+            window.history.replaceState({}, '', window.location.pathname);
+        }
+    }, []);
 
     const getServiceStatus = (service) => {
         return connections.find(c => c.service === service);
@@ -110,10 +129,26 @@ const Settings = () => {
         }
     };
 
-    // ── Google Card (OAuth2, server-managed) ──
+    const disconnectGoogle = async () => {
+        if (!confirm('Deconnecter votre compte Google ?')) return;
+        try {
+            const token = localStorage.getItem('token');
+            await fetch('/api/credentials/google', {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` },
+                credentials: 'include'
+            });
+            setMessages(m => ({ ...m, google: { type: 'success', text: 'Compte Google deconnecte.' } }));
+            fetchStatus();
+        } catch { }
+    };
+
+    // ── Google Card (OAuth2, per-user) ──
     const GoogleCard = () => {
         const status = getServiceStatus('google');
         const isActive = status?.status === 'active';
+        const canConnect = status?.can_connect;
+        const msg = messages.google;
 
         return (
             <div className="glass rounded-xl p-6 border border-slate-200/80 hover:border-blue-200 transition-all lg:col-span-3">
@@ -133,24 +168,63 @@ const Settings = () => {
                             : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
                     }`}>
                         {isActive ? <CheckCircle2 className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
-                        {isActive ? 'Connecté via OAuth2' : 'Non configuré'}
+                        {isActive ? 'Compte connecte' : 'Non connecte'}
                     </div>
                 </div>
 
-                <div className="flex items-center gap-3 px-4 py-3 bg-blue-50/60 rounded-lg border border-blue-100">
-                    <Shield className="w-5 h-5 text-blue-500 shrink-0" />
-                    <div className="text-sm text-slate-600">
-                        {isActive ? (
-                            <>
-                                La connexion Google Search Console est <strong className="text-slate-900">gérée automatiquement</strong> via OAuth2.
-                            </>
-                        ) : (
-                            <>
-                                Les variables <code className="text-xs bg-white px-1 py-0.5 rounded">GOOGLE_CLIENT_ID</code>, <code className="text-xs bg-white px-1 py-0.5 rounded">GOOGLE_CLIENT_SECRET</code> et <code className="text-xs bg-white px-1 py-0.5 rounded">GOOGLE_REFRESH_TOKEN</code> doivent être configurées sur le serveur.
-                            </>
+                {isActive ? (
+                    <div className="space-y-3">
+                        <div className="flex items-center justify-between px-4 py-3 bg-green-500/5 rounded-lg border border-green-500/10">
+                            <div className="flex items-center gap-2">
+                                <Zap className="w-3.5 h-3.5 text-green-500" />
+                                <span className="text-xs text-green-600">
+                                    {`Connecte le ${new Date(status.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}`}
+                                </span>
+                            </div>
+                            <button
+                                onClick={disconnectGoogle}
+                                className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-500 transition-colors"
+                            >
+                                <LogOut className="w-3.5 h-3.5" />
+                                Deconnecter
+                            </button>
+                        </div>
+                        <div className="flex items-center gap-3 px-4 py-3 bg-blue-50/60 rounded-lg border border-blue-100">
+                            <Shield className="w-5 h-5 text-blue-500 shrink-0" />
+                            <div className="text-sm text-slate-600">
+                                Votre compte Google est connecte via OAuth2. Les audits utilisent automatiquement vos donnees Search Console.
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-3 px-4 py-3 bg-blue-50/60 rounded-lg border border-blue-100">
+                            <Shield className="w-5 h-5 text-blue-500 shrink-0" />
+                            <div className="text-sm text-slate-600">
+                                Connectez votre compte Google pour activer les modules Search Console (sitemaps, performance, indexation, etc.).
+                            </div>
+                        </div>
+                        {canConnect !== false && (
+                            <a
+                                href="/api/auth/google/connect"
+                                className="w-full py-2.5 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-200/80"
+                            >
+                                <LogIn className="w-4 h-4" />
+                                Connecter Google Search Console
+                            </a>
                         )}
                     </div>
-                </div>
+                )}
+
+                {msg && (
+                    <div className={`mt-3 text-xs px-3 py-2 rounded-lg ${
+                        msg.type === 'success'
+                            ? 'bg-green-500/10 text-green-500 border border-green-500/20'
+                            : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                    }`}>
+                        {msg.text}
+                    </div>
+                )}
             </div>
         );
     };

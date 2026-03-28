@@ -7,21 +7,23 @@ import sharp from 'sharp';
 import { uploadToCloudinary } from '../utils/cloudinary.js';
 
 // -- OAuth2 client for Google Search Console API ------------------------------
-function gscAuth() {
+function gscAuth(refreshToken) {
+    const token = refreshToken || process.env.GOOGLE_REFRESH_TOKEN;
+    if (!token) throw new Error('No Google refresh token available');
     const oauth2 = new google.auth.OAuth2(
         process.env.GOOGLE_CLIENT_ID,
         process.env.GOOGLE_CLIENT_SECRET
     );
-    oauth2.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+    oauth2.setCredentials({ refresh_token: token });
     return oauth2;
 }
 
-function webmastersClient() {
-    return google.webmasters({ version: 'v3', auth: gscAuth() });
+function webmastersClient(refreshToken) {
+    return google.webmasters({ version: 'v3', auth: gscAuth(refreshToken) });
 }
 
-function searchConsoleClient() {
-    return google.searchconsole({ version: 'v1', auth: gscAuth() });
+function searchConsoleClient(refreshToken) {
+    return google.searchconsole({ version: 'v1', auth: gscAuth(refreshToken) });
 }
 
 // -- Helpers ------------------------------------------------------------------
@@ -316,11 +318,11 @@ async function renderAndUpload(html, cloudinaryFolder) {
 // ══════════════════════════════════════════════════════════════════════════════
 // 1. SITEMAPS
 // ══════════════════════════════════════════════════════════════════════════════
-export async function captureGscSitemapsAPI(siteUrl, auditId) {
+export async function captureGscSitemapsAPI(siteUrl, auditId, refreshToken) {
     const result = { statut: 'ERROR', capture: null };
     try {
         const domain = new URL(siteUrl).hostname;
-        const wm = webmastersClient();
+        const wm = webmastersClient(refreshToken);
         const siteUrlResolved = await resolveSiteUrl(wm, domain);
 
         console.log(`[GSC-API] Fetching sitemaps for: ${siteUrlResolved}`);
@@ -367,18 +369,18 @@ export async function captureGscSitemapsAPI(siteUrl, auditId) {
 // ══════════════════════════════════════════════════════════════════════════════
 // 2. HTTPS / Security
 // ══════════════════════════════════════════════════════════════════════════════
-export async function captureGscHttpsAPI(siteUrl, auditId) {
+export async function captureGscHttpsAPI(siteUrl, auditId, refreshToken) {
     const result = { statut: 'ERROR', capture: null };
     try {
         const domain = new URL(siteUrl).hostname;
-        const wm = webmastersClient();
+        const wm = webmastersClient(refreshToken);
         const siteUrlResolved = await resolveSiteUrl(wm, domain);
 
         // Check if site uses HTTPS (based on property type)
         const isHttps = siteUrlResolved.startsWith('https://') || siteUrlResolved.startsWith('sc-domain:');
 
         // Query search analytics to get a sample of pages to verify HTTPS
-        const sc = searchConsoleClient();
+        const sc = searchConsoleClient(refreshToken);
         let httpsPages = 0;
         let totalPages = 0;
 
@@ -422,7 +424,7 @@ export async function captureGscHttpsAPI(siteUrl, auditId) {
 // ══════════════════════════════════════════════════════════════════════════════
 // 3. PERFORMANCE (Traffic) — returns multiple captures
 // ══════════════════════════════════════════════════════════════════════════════
-export async function captureGscPerformanceAPI(siteUrl, auditId) {
+export async function captureGscPerformanceAPI(siteUrl, auditId, refreshToken) {
     const result = {
         statut: 'ERROR',
         capture1: null,
@@ -435,8 +437,8 @@ export async function captureGscPerformanceAPI(siteUrl, auditId) {
 
     try {
         const domain = new URL(siteUrl).hostname;
-        const wm = webmastersClient();
-        const sc = searchConsoleClient();
+        const wm = webmastersClient(refreshToken);
+        const sc = searchConsoleClient(refreshToken);
         const siteUrlResolved = await resolveSiteUrl(wm, domain);
 
         const startDate = dateDaysAgo(30);
@@ -519,7 +521,7 @@ export async function captureGscPerformanceAPI(siteUrl, auditId) {
 // ══════════════════════════════════════════════════════════════════════════════
 // 4. COVERAGE (Pages Indexed)
 // ══════════════════════════════════════════════════════════════════════════════
-export async function captureGscCoverageAPI(siteUrl, auditId) {
+export async function captureGscCoverageAPI(siteUrl, auditId, refreshToken) {
     const result = {
         statut: 'ERROR',
         capture: null,
@@ -530,8 +532,8 @@ export async function captureGscCoverageAPI(siteUrl, auditId) {
 
     try {
         const domain = new URL(siteUrl).hostname;
-        const wm = webmastersClient();
-        const sc = searchConsoleClient();
+        const wm = webmastersClient(refreshToken);
+        const sc = searchConsoleClient(refreshToken);
         const siteUrlResolved = await resolveSiteUrl(wm, domain);
 
         // Use search analytics to count unique pages appearing in search (≈ indexed pages)
@@ -619,12 +621,12 @@ export async function captureGscCoverageAPI(siteUrl, auditId) {
 // ══════════════════════════════════════════════════════════════════════════════
 // 5. TOP PAGES (Meilleures pages)
 // ══════════════════════════════════════════════════════════════════════════════
-export async function captureGscTopPagesAPI(siteUrl, auditId) {
+export async function captureGscTopPagesAPI(siteUrl, auditId, refreshToken) {
     const result = { statut: 'ERROR', capture: null };
     try {
         const domain = new URL(siteUrl).hostname;
-        const wm = webmastersClient();
-        const sc = searchConsoleClient();
+        const wm = webmastersClient(refreshToken);
+        const sc = searchConsoleClient(refreshToken);
         const siteUrlResolved = await resolveSiteUrl(wm, domain);
 
         console.log(`[GSC-API] Fetching top pages for: ${siteUrlResolved}`);

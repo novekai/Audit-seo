@@ -24,6 +24,7 @@ import { initWorker } from './jobs/worker.js';
 import { initAirtablePoller } from './jobs/airtablePoller.js';
 import { reconcileAuditCompletion } from './utils/auditStatus.js';
 import { generateActionPlanSheet } from './modules/action_plan_sheet.js';
+import { google } from 'googleapis';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1598,6 +1599,104 @@ app.get('/api/sessions/status', authenticateToken, async (req, res) => {
     }
 });
 
+// -- Google OAuth2: per-user connect flow --
+
+const GOOGLE_SCOPES = [
+    'https://www.googleapis.com/auth/webmasters.readonly',
+    'https://www.googleapis.com/auth/spreadsheets'
+];
+
+function googleOAuth2Client() {
+    return new google.auth.OAuth2(
+        process.env.GOOGLE_CLIENT_ID,
+        process.env.GOOGLE_CLIENT_SECRET,
+        (process.env.RAILWAY_STATIC_URL || process.env.VITE_API_URL || 'http://localhost:5000') + '/api/auth/google/callback'
+    );
+}
+
+// Start Google OAuth2 flow
+app.get('/api/auth/google/connect', authenticateToken, (req, res) => {
+    if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+        return res.status(500).json({ error: 'Google OAuth2 non configure sur le serveur' });
+    }
+    const oauth2 = googleOAuth2Client();
+    // Encode userId in state for CSRF protection
+    const state = Buffer.from(JSON.stringify({ userId: req.user.userId, ts: Date.now() })).toString('base64url');
+    const url = oauth2.generateAuthUrl({
+        access_type: 'offline',
+        prompt: 'consent',
+        scope: GOOGLE_SCOPES,
+        state
+    });
+    res.redirect(url);
+});
+
+// Google OAuth2 callback
+app.get('/api/auth/google/callback', async (req, res) => {
+    const { code, state, error } = req.query;
+
+    if (error) {
+        console.error('[GOOGLE OAUTH] User denied access:', error);
+        return res.redirect('/?google_auth=error&reason=denied');
+    }
+
+    if (!code || !state) {
+        return res.redirect('/?google_auth=error&reason=missing_params');
+    }
+
+    try {
+        // Decode state to get userId
+        const stateData = JSON.parse(Buffer.from(state, 'base64url').toString());
+        const { userId, ts } = stateData;
+
+        // Reject if state is older than 10 minutes
+        if (Date.now() - ts > 10 * 60 * 1000) {
+            return res.redirect('/?google_auth=error&reason=expired');
+        }
+
+        const oauth2 = googleOAuth2Client();
+        const { tokens } = await oauth2.getToken(code);
+
+        if (!tokens.refresh_token) {
+            console.error('[GOOGLE OAUTH] No refresh_token received - user may have already authorized');
+            return res.redirect('/?google_auth=error&reason=no_refresh_token');
+        }
+
+        // Store encrypted refresh token in service_credentials
+        const encryptedData = encrypt(JSON.stringify({ refresh_token: tokens.refresh_token }));
+        const id = uuidv4();
+        await db.run(
+            `INSERT INTO service_credentials (id, user_id, service, auth_type, encrypted_data)
+             VALUES (?, ?, 'google', 'oauth2', ?)
+             ON CONFLICT (user_id, service) DO UPDATE SET
+               encrypted_data = excluded.encrypted_data,
+               auth_type = 'oauth2',
+               updated_at = CURRENT_TIMESTAMP`,
+            [id, userId, encryptedData]
+        );
+
+        console.log(`[GOOGLE OAUTH] Refresh token stored for user ${userId}`);
+        return res.redirect('/?google_auth=success');
+    } catch (err) {
+        console.error('[GOOGLE OAUTH] Callback error:', err);
+        return res.redirect('/?google_auth=error&reason=server_error');
+    }
+});
+
+// Disconnect Google account
+app.delete('/api/credentials/google', authenticateToken, async (req, res) => {
+    const userId = req.user.userId;
+    if (!db) return res.status(503).json({ error: 'Base de donnees en cours de chargement' });
+
+    try {
+        await db.run('DELETE FROM service_credentials WHERE user_id = ? AND service = ?', [userId, 'google']);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('[GOOGLE OAUTH] Disconnect error:', err);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
 // -- Credential endpoints (MRM, Ubersuggest) --
 
 // Save encrypted credentials
@@ -1655,13 +1754,22 @@ app.get('/api/credentials/status', authenticateToken, async (req, res) => {
     try {
         const result = [];
 
-        // Google: check env vars
-        const googleOk = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN);
-        result.push({
-            service: 'google',
-            status: googleOk ? 'active' : 'not_configured',
-            auth_type: 'oauth2'
-        });
+        // Google: check per-user token first, then env var fallback
+        const googleCred = await db.get(
+            'SELECT created_at FROM service_credentials WHERE user_id = ? AND service = ?',
+            [userId, 'google']
+        );
+        const googleConfigured = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+        if (googleCred) {
+            result.push({ service: 'google', status: 'active', auth_type: 'oauth2', created_at: googleCred.created_at });
+        } else {
+            result.push({
+                service: 'google',
+                status: 'not_configured',
+                auth_type: 'oauth2',
+                can_connect: googleConfigured
+            });
+        }
 
         // MRM & Ubersuggest: check credentials table, then legacy cookies
         for (const svc of ['mrm', 'ubersuggest']) {

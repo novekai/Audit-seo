@@ -456,30 +456,32 @@ export const initWorker = (io, db) => {
                 await updateStep('check_404', 'FAILED', e.message);
             }
 
-            // STEP 9: Google Search Console (API-based, no cookies needed)
+            // STEP 9: Google Search Console (API-based)
             if (await checkCancellation()) return;
-            // Determine if GSC API is available (OAuth2 configured server-side)
-            const gscApiAvailable = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN);
+            // Get user's Google refresh token (per-user first, then env var fallback)
+            const googleCreds = await getServiceCredentials('google');
+            const googleRefreshToken = googleCreds?.refresh_token || process.env.GOOGLE_REFRESH_TOKEN || null;
+            const gscApiAvailable = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && googleRefreshToken);
 
             try {
                 await updateStep('gsc_sitemaps', 'EN_COURS');
                 if (gscApiAvailable) {
                     console.log(`[WORKER] [JOB ${job.id}] Executing Step: GSC Sitemaps (API)...`);
-                    const gscSitRes = await runWithTimeout(captureGscSitemapsAPI(siteUrl, auditId), 240000, 'GSC Sitemaps API');
+                    const gscSitRes = await runWithTimeout(captureGscSitemapsAPI(siteUrl, auditId, googleRefreshToken), 240000, 'GSC Sitemaps API');
                     await updateStep('gsc_sitemaps', gscSitRes.statut, gscSitRes.details, gscSitRes.capture);
                     if (audit.airtable_record_id && gscSitRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_sitemap_declaré', gscSitRes.capture);
 
                     await updateStep('gsc_https', 'EN_COURS');
                     console.log(`[WORKER] [JOB ${job.id}] Executing Step: GSC HTTPS (API)...`);
-                    const gscHttpsRes = await runWithTimeout(captureGscHttpsAPI(siteUrl, auditId), 240000, 'GSC HTTPS API');
+                    const gscHttpsRes = await runWithTimeout(captureGscHttpsAPI(siteUrl, auditId, googleRefreshToken), 240000, 'GSC HTTPS API');
                     await updateStep('gsc_https', gscHttpsRes.statut, gscHttpsRes.details, gscHttpsRes.capture);
                     if (audit.airtable_record_id && gscHttpsRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_https', gscHttpsRes.capture);
                 } else {
                     // Fallback to legacy cookie-based Playwright capture
                     googleCookies = await getSessionCookies('google');
                     if (!googleCookies) {
-                        await updateStep('gsc_sitemaps', 'SKIP', 'Google OAuth2 non configuré et aucune session cookie');
-                        await updateStep('gsc_https', 'SKIP', 'Google OAuth2 non configuré et aucune session cookie');
+                        await updateStep('gsc_sitemaps', 'SKIP', 'Compte Google non connecte et aucune session cookie');
+                        await updateStep('gsc_https', 'SKIP', 'Compte Google non connecte et aucune session cookie');
                     } else {
                         console.log(`[WORKER] [JOB ${job.id}] Executing Step: GSC Sitemaps (cookies fallback)...`);
                         const gscSitRes = await runWithTimeout(captureGscSitemaps(siteUrl, auditId, googleCookies), 240000, 'GSC Sitemaps');
@@ -560,7 +562,7 @@ export const initWorker = (io, db) => {
                 await updateStep('gsc_performance', 'EN_COURS');
                 await updateStep('gsc_meilleure_requete', 'EN_COURS');
                 await updateStep('gsc_query_page_clicks_impressions', 'EN_COURS');
-                const gscPerfRes = await captureGscPerformanceAPI(siteUrl, auditId);
+                const gscPerfRes = await captureGscPerformanceAPI(siteUrl, auditId, googleRefreshToken);
                 await updateStep('gsc_performance', gscPerfRes.statut, gscPerfRes.details, gscPerfRes.capture1);
                 const bestQueryStep = buildDerivedCaptureStep(
                     gscPerfRes.bestQueryCapture, gscPerfRes.statut, gscPerfRes.details, 'Capture de la meilleure requête non générée'
@@ -583,7 +585,7 @@ export const initWorker = (io, db) => {
                 await updateStep('gsc_coverage', 'EN_COURS');
                 await updateStep('gsc_indexation_image', 'EN_COURS');
                 await updateStep('gsc_problemes_indexation', 'EN_COURS');
-                const gscCovRes = await captureGscCoverageAPI(siteUrl, auditId);
+                const gscCovRes = await captureGscCoverageAPI(siteUrl, auditId, googleRefreshToken);
                 await updateStep('gsc_coverage', gscCovRes.statut, gscCovRes.details, gscCovRes.capture);
                 const indexationStep = buildDerivedCaptureStep(
                     gscCovRes.indexationCapture, gscCovRes.statut, gscCovRes.details, 'Capture d\'indexation GSC non générée'
@@ -602,7 +604,7 @@ export const initWorker = (io, db) => {
 
                 // STEP 17: GSC Top Pages — API
                 await updateStep('gsc_top_pages', 'EN_COURS');
-                const gscTopRes = await captureGscTopPagesAPI(siteUrl, auditId);
+                const gscTopRes = await captureGscTopPagesAPI(siteUrl, auditId, googleRefreshToken);
                 await updateStep('gsc_top_pages', gscTopRes.statut, gscTopRes.details, gscTopRes.capture);
                 if (audit.airtable_record_id && gscTopRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_meilleure_page', gscTopRes.capture);
             } else if (googleCookies) {
@@ -663,7 +665,7 @@ export const initWorker = (io, db) => {
                     'gsc_problemes_indexation',
                     'gsc_top_pages'
                 ]) {
-                    await updateStep(k, 'SKIP', 'Google OAuth2 non configuré et aucune session cookie');
+                    await updateStep(k, 'SKIP', 'Compte Google non connecte et aucune session cookie');
                 }
             }
 
