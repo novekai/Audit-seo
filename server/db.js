@@ -142,7 +142,7 @@ export async function initDb() {
     ON user_sessions(user_id, service, created_at DESC)
   `);
 
-  // ── Service credentials table (auto-login for MRM, Ubersuggest) ──
+  // -- Service credentials table (auto-login for MRM, Ubersuggest) --
   await db.exec(`
     CREATE TABLE IF NOT EXISTS service_credentials (
       id TEXT PRIMARY KEY,

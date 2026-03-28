@@ -26,7 +26,7 @@ async function cropWithAI(imagePath, prompt) {
     } catch (e) { return imagePath; }
 }
 
-// ── Auto-login via Playwright ─────────────────────────────────────────────────
+// -- Auto-login via Playwright -------------------------------------------------
 async function loginToUbersuggest(page, email, password) {
     console.log(`[UBERSUGGEST] Auto-login with credentials for: ${email}`);
     await page.goto('https://app.neilpatel.com/en/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -58,7 +58,7 @@ async function loginToUbersuggest(page, email, password) {
     console.log(`[UBERSUGGEST] Login successful — redirected to: ${currentUrl}`);
 }
 
-// ── Launch browser with appropriate auth method ───────────────────────────────
+// -- Launch browser with appropriate auth method -------------------------------
 async function launchWithAuth(authData) {
     const browser = await chromium.launch({
         headless: true,
@@ -84,7 +84,7 @@ async function launchWithAuth(authData) {
     return { browser, context, page };
 }
 
-// ── UBERSUGGEST — Domain Authority ───────────────────────────────────────────
+// -- UBERSUGGEST — Domain Authority -------------------------------------------
 export async function captureUbersuggest(siteUrl, auditId, authData) {
     const result = { statut: 'ERROR', capture: null };
 

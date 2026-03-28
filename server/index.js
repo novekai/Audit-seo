@@ -1598,6 +1598,174 @@ app.get('/api/sessions/status', authenticateToken, async (req, res) => {
     }
 });
 
+// -- Credential endpoints (MRM, Ubersuggest) --
+
+// Save encrypted credentials
+app.post('/api/credentials/:service', authenticateToken, async (req, res) => {
+    const { service } = req.params;
+    const { email, password } = req.body;
+    const userId = req.user.userId;
+
+    if (!['mrm', 'ubersuggest'].includes(service)) {
+        return res.status(400).json({ error: 'Service invalide' });
+    }
+    if (!email || !password) {
+        return res.status(400).json({ error: 'Email et mot de passe requis' });
+    }
+    if (!db) return res.status(503).json({ error: 'Base de donnees en cours de chargement' });
+
+    try {
+        const encryptedData = encrypt(JSON.stringify({ email, password }));
+        const id = uuidv4();
+        await db.run(
+            `INSERT INTO service_credentials (id, user_id, service, encrypted_data)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT (user_id, service) DO UPDATE SET
+               encrypted_data = excluded.encrypted_data,
+               updated_at = CURRENT_TIMESTAMP`,
+            [id, userId, service, encryptedData]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        console.error('[CREDENTIALS] Save error:', err);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Delete credentials
+app.delete('/api/credentials/:service', authenticateToken, async (req, res) => {
+    const { service } = req.params;
+    const userId = req.user.userId;
+    if (!db) return res.status(503).json({ error: 'Base de donnees en cours de chargement' });
+
+    try {
+        await db.run('DELETE FROM service_credentials WHERE user_id = ? AND service = ?', [userId, service]);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('[CREDENTIALS] Delete error:', err);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Status of all services (Google OAuth2 from env + credentials + legacy cookies)
+app.get('/api/credentials/status', authenticateToken, async (req, res) => {
+    const userId = req.user.userId;
+    if (!db) return res.status(503).json({ error: 'Base de donnees en cours de chargement' });
+
+    try {
+        const result = [];
+
+        // Google: check env vars
+        const googleOk = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN);
+        result.push({
+            service: 'google',
+            status: googleOk ? 'active' : 'not_configured',
+            auth_type: 'oauth2'
+        });
+
+        // MRM & Ubersuggest: check credentials table, then legacy cookies
+        for (const svc of ['mrm', 'ubersuggest']) {
+            const cred = await db.get(
+                'SELECT created_at, updated_at FROM service_credentials WHERE user_id = ? AND service = ?',
+                [userId, svc]
+            );
+            if (cred) {
+                result.push({ service: svc, status: 'active', auth_type: 'password', created_at: cred.created_at });
+            } else {
+                const session = await db.get(
+                    'SELECT created_at FROM user_sessions WHERE user_id = ? AND service = ?',
+                    [userId, svc]
+                );
+                if (session) {
+                    result.push({ service: svc, status: 'active', auth_type: 'cookie', legacy: true, created_at: session.created_at });
+                } else {
+                    result.push({ service: svc, status: 'not_configured' });
+                }
+            }
+        }
+
+        res.json(result);
+    } catch (err) {
+        console.error('[CREDENTIALS] Status error:', err);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Test credentials (login via Playwright)
+app.post('/api/credentials/test/:service', authenticateToken, async (req, res) => {
+    const { service } = req.params;
+    const userId = req.user.userId;
+
+    if (!['mrm', 'ubersuggest'].includes(service)) {
+        return res.status(400).json({ error: 'Service invalide' });
+    }
+    if (!db) return res.status(503).json({ error: 'Base de donnees en cours de chargement' });
+
+    try {
+        const row = await db.get(
+            'SELECT encrypted_data FROM service_credentials WHERE user_id = ? AND service = ?',
+            [userId, service]
+        );
+        if (!row) {
+            return res.status(404).json({ error: 'Aucun identifiant enregistre pour ce service' });
+        }
+
+        const { email, password } = JSON.parse(decrypt(row.encrypted_data));
+
+        const { chromium } = await import('playwright');
+        const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+        const context = await browser.newContext({
+            viewport: { width: 1400, height: 900 },
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        });
+        const page = await context.newPage();
+
+        try {
+            if (service === 'mrm') {
+                await page.goto('https://myrankingmetrics.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
+                await page.waitForTimeout(2000);
+                const emailInput = page.locator('input[name="email"], input[type="email"], input[name="_username"]').first();
+                await emailInput.waitFor({ state: 'visible', timeout: 10000 });
+                await emailInput.fill(email);
+                const passwordInput = page.locator('input[name="password"], input[type="password"], input[name="_password"]').first();
+                await passwordInput.fill(password);
+                const submitBtn = page.locator('button[type="submit"], input[type="submit"]').first();
+                await submitBtn.click();
+                await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                await page.waitForTimeout(3000);
+                const currentUrl = page.url();
+                if (currentUrl.includes('login') || currentUrl.includes('signin') || currentUrl.includes('connexion')) {
+                    throw new Error('Login failed');
+                }
+            } else {
+                await page.goto('https://app.neilpatel.com/en/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
+                await page.waitForTimeout(2000);
+                const emailInput = page.locator('input[type="email"], input[name="email"]').first();
+                await emailInput.waitFor({ state: 'visible', timeout: 10000 });
+                await emailInput.fill(email);
+                const passwordInput = page.locator('input[type="password"], input[name="password"]').first();
+                await passwordInput.fill(password);
+                const submitBtn = page.locator('button[type="submit"]').first();
+                await submitBtn.click();
+                await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                await page.waitForTimeout(5000);
+                const currentUrl = page.url();
+                if (currentUrl.includes('login') || currentUrl.includes('signin')) {
+                    throw new Error('Login failed');
+                }
+            }
+            res.json({ success: true, message: 'Connexion reussie !' });
+        } catch (loginErr) {
+            res.json({ success: false, error: 'Echec de connexion : ' + loginErr.message });
+        } finally {
+            await browser.close();
+        }
+    } catch (err) {
+        console.error('[CREDENTIALS] Test error:', err);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
 // The "catchall" handler: for any request that doesn't
 // match one above, send back React's index.html file.
 app.use((req, res) => {

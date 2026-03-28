@@ -165,7 +165,7 @@ export const initWorker = (io, db) => {
 
                 // Synchronisation Sitemap vers Airtable
                 if (audit.airtable_record_id) {
-                    const sitemapUrlValue = robotsResult.sitemap.url || 'Le fichier sitemap(s) n’existe pas';
+                    const sitemapUrlValue = robotsResult.sitemap.url || 'Le fichier sitemap(s) n\'existe pas';
                     await updateAirtableField(audit.airtable_record_id, 'sitemaps', sitemapUrlValue);
                     if (robotsResult.sitemap.capture) {
                         console.log(`[WORKER] [JOB ${job.id}] Synchronisation de la capture Sitemap vers Airtable...`);
@@ -178,9 +178,9 @@ export const initWorker = (io, db) => {
                 await updateStep('sitemap', 'FAILED', e.message);
             }
 
-            // ──────────────────────────────────────────────────────────────────
+            // ------------------------------------------------------------------
             // HELPER: Load encrypted cookies for a service (legacy)
-            // ──────────────────────────────────────────────────────────────────
+            // ------------------------------------------------------------------
             const getSessionCookies = async (service) => {
                 const sessionRow = await db.get(
                     'SELECT encrypted_cookies FROM user_sessions WHERE user_id = ? AND service = ? ORDER BY created_at DESC LIMIT 1',
@@ -202,9 +202,9 @@ export const initWorker = (io, db) => {
                 }
             };
 
-            // ──────────────────────────────────────────────────────────────────
+            // ------------------------------------------------------------------
             // HELPER: Load credentials for auto-login (new system)
-            // ──────────────────────────────────────────────────────────────────
+            // ------------------------------------------------------------------
             const getServiceCredentials = async (service) => {
                 const row = await db.get(
                     'SELECT encrypted_data, auth_type FROM service_credentials WHERE user_id = ? AND service = ? AND status = ?',
@@ -556,114 +556,114 @@ export const initWorker = (io, db) => {
             // STEP 15: GSC Performance (Traffic)
             if (await checkCancellation()) return;
             if (gscApiAvailable) {
-                // ── API-based GSC Performance ──
-                await updateStep(‘gsc_performance’, ‘EN_COURS’);
-                await updateStep(‘gsc_meilleure_requete’, ‘EN_COURS’);
-                await updateStep(‘gsc_query_page_clicks_impressions’, ‘EN_COURS’);
+                // -- API-based GSC Performance --
+                await updateStep('gsc_performance', 'EN_COURS');
+                await updateStep('gsc_meilleure_requete', 'EN_COURS');
+                await updateStep('gsc_query_page_clicks_impressions', 'EN_COURS');
                 const gscPerfRes = await captureGscPerformanceAPI(siteUrl, auditId);
-                await updateStep(‘gsc_performance’, gscPerfRes.statut, gscPerfRes.details, gscPerfRes.capture1);
+                await updateStep('gsc_performance', gscPerfRes.statut, gscPerfRes.details, gscPerfRes.capture1);
                 const bestQueryStep = buildDerivedCaptureStep(
-                    gscPerfRes.bestQueryCapture, gscPerfRes.statut, gscPerfRes.details, ‘Capture de la meilleure requête non générée’
+                    gscPerfRes.bestQueryCapture, gscPerfRes.statut, gscPerfRes.details, 'Capture de la meilleure requête non générée'
                 );
                 const queryTableStep = buildDerivedCaptureStep(
-                    gscPerfRes.queryPageClicksImpressionsCapture, gscPerfRes.statut, gscPerfRes.details, ‘Capture query/page/clicks/impressions non générée’
+                    gscPerfRes.queryPageClicksImpressionsCapture, gscPerfRes.statut, gscPerfRes.details, 'Capture query/page/clicks/impressions non générée'
                 );
-                await updateStep(‘gsc_meilleure_requete’, bestQueryStep.status, bestQueryStep.details, bestQueryStep.outputUrl);
-                await updateStep(‘gsc_query_page_clicks_impressions’, queryTableStep.status, queryTableStep.details, queryTableStep.outputUrl);
+                await updateStep('gsc_meilleure_requete', bestQueryStep.status, bestQueryStep.details, bestQueryStep.outputUrl);
+                await updateStep('gsc_query_page_clicks_impressions', queryTableStep.status, queryTableStep.details, queryTableStep.outputUrl);
                 if (audit.airtable_record_id) {
-                    if (gscPerfRes.capture1) await updateAirtableField(audit.airtable_record_id, ‘Img_trafic actuel1’, gscPerfRes.capture1);
-                    if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, ‘Img_trafic actuel2’, gscPerfRes.capture2);
-                    if (gscPerfRes.clics) await updateAirtableField(audit.airtable_record_id, ‘nombres de clics trafic actuel’, gscPerfRes.clics);
-                    if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, ‘Img_donnee_brute_gcs’, gscPerfRes.capture2);
-                    if (gscPerfRes.bestQueryCapture) await updateAirtableField(audit.airtable_record_id, ‘Img_meilleure_requete’, gscPerfRes.bestQueryCapture);
-                    if (gscPerfRes.queryPageClicksImpressionsCapture) await updateAirtableField(audit.airtable_record_id, ‘Img_query_page_clicks_impressions’, gscPerfRes.queryPageClicksImpressionsCapture);
+                    if (gscPerfRes.capture1) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel1', gscPerfRes.capture1);
+                    if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel2', gscPerfRes.capture2);
+                    if (gscPerfRes.clics) await updateAirtableField(audit.airtable_record_id, 'nombres de clics trafic actuel', gscPerfRes.clics);
+                    if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_donnee_brute_gcs', gscPerfRes.capture2);
+                    if (gscPerfRes.bestQueryCapture) await updateAirtableField(audit.airtable_record_id, 'Img_meilleure_requete', gscPerfRes.bestQueryCapture);
+                    if (gscPerfRes.queryPageClicksImpressionsCapture) await updateAirtableField(audit.airtable_record_id, 'Img_query_page_clicks_impressions', gscPerfRes.queryPageClicksImpressionsCapture);
                 }
 
                 // STEP 16: GSC Coverage (Pages Indexed) — API
-                await updateStep(‘gsc_coverage’, ‘EN_COURS’);
-                await updateStep(‘gsc_indexation_image’, ‘EN_COURS’);
-                await updateStep(‘gsc_problemes_indexation’, ‘EN_COURS’);
+                await updateStep('gsc_coverage', 'EN_COURS');
+                await updateStep('gsc_indexation_image', 'EN_COURS');
+                await updateStep('gsc_problemes_indexation', 'EN_COURS');
                 const gscCovRes = await captureGscCoverageAPI(siteUrl, auditId);
-                await updateStep(‘gsc_coverage’, gscCovRes.statut, gscCovRes.details, gscCovRes.capture);
+                await updateStep('gsc_coverage', gscCovRes.statut, gscCovRes.details, gscCovRes.capture);
                 const indexationStep = buildDerivedCaptureStep(
-                    gscCovRes.indexationCapture, gscCovRes.statut, gscCovRes.details, ‘Capture d\’indexation GSC non générée’
+                    gscCovRes.indexationCapture, gscCovRes.statut, gscCovRes.details, 'Capture d\'indexation GSC non générée'
                 );
                 const problemIndexationStep = buildDerivedCaptureStep(
-                    gscCovRes.problemCapture, gscCovRes.statut, gscCovRes.details, ‘Capture des problèmes d\’indexation non générée’
+                    gscCovRes.problemCapture, gscCovRes.statut, gscCovRes.details, 'Capture des problèmes d\'indexation non générée'
                 );
-                await updateStep(‘gsc_indexation_image’, indexationStep.status, indexationStep.details, indexationStep.outputUrl);
-                await updateStep(‘gsc_problemes_indexation’, problemIndexationStep.status, problemIndexationStep.details, problemIndexationStep.outputUrl);
+                await updateStep('gsc_indexation_image', indexationStep.status, indexationStep.details, indexationStep.outputUrl);
+                await updateStep('gsc_problemes_indexation', problemIndexationStep.status, problemIndexationStep.details, problemIndexationStep.outputUrl);
                 if (audit.airtable_record_id) {
-                    if (gscCovRes.capture) await updateAirtableField(audit.airtable_record_id, ‘Img_urls’, gscCovRes.capture);
-                    if (gscCovRes.pagesIndexed) await updateAirtableField(audit.airtable_record_id, ‘nombres de pages indexé trafic actuel’, gscCovRes.pagesIndexed);
-                    if (gscCovRes.indexationCapture) await updateAirtableField(audit.airtable_record_id, ‘Img_indexation_gsc’, gscCovRes.indexationCapture);
-                    if (gscCovRes.problemCapture) await updateAirtableField(audit.airtable_record_id, ‘Img_probleme_indexation_gsc’, gscCovRes.problemCapture);
+                    if (gscCovRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_urls', gscCovRes.capture);
+                    if (gscCovRes.pagesIndexed) await updateAirtableField(audit.airtable_record_id, 'nombres de pages indexé trafic actuel', gscCovRes.pagesIndexed);
+                    if (gscCovRes.indexationCapture) await updateAirtableField(audit.airtable_record_id, 'Img_indexation_gsc', gscCovRes.indexationCapture);
+                    if (gscCovRes.problemCapture) await updateAirtableField(audit.airtable_record_id, 'Img_probleme_indexation_gsc', gscCovRes.problemCapture);
                 }
 
                 // STEP 17: GSC Top Pages — API
-                await updateStep(‘gsc_top_pages’, ‘EN_COURS’);
+                await updateStep('gsc_top_pages', 'EN_COURS');
                 const gscTopRes = await captureGscTopPagesAPI(siteUrl, auditId);
-                await updateStep(‘gsc_top_pages’, gscTopRes.statut, gscTopRes.details, gscTopRes.capture);
-                if (audit.airtable_record_id && gscTopRes.capture) await updateAirtableField(audit.airtable_record_id, ‘Img_meilleure_page’, gscTopRes.capture);
+                await updateStep('gsc_top_pages', gscTopRes.statut, gscTopRes.details, gscTopRes.capture);
+                if (audit.airtable_record_id && gscTopRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_meilleure_page', gscTopRes.capture);
             } else if (googleCookies) {
-                // ── Fallback: Cookie-based Playwright capture ──
-                await updateStep(‘gsc_performance’, ‘EN_COURS’);
-                await updateStep(‘gsc_meilleure_requete’, ‘EN_COURS’);
-                await updateStep(‘gsc_query_page_clicks_impressions’, ‘EN_COURS’);
+                // -- Fallback: Cookie-based Playwright capture --
+                await updateStep('gsc_performance', 'EN_COURS');
+                await updateStep('gsc_meilleure_requete', 'EN_COURS');
+                await updateStep('gsc_query_page_clicks_impressions', 'EN_COURS');
                 const gscPerfRes = await captureGscPerformance(siteUrl, auditId, googleCookies);
-                await updateStep(‘gsc_performance’, gscPerfRes.statut, gscPerfRes.details, gscPerfRes.capture1);
+                await updateStep('gsc_performance', gscPerfRes.statut, gscPerfRes.details, gscPerfRes.capture1);
                 const bestQueryStep = buildDerivedCaptureStep(
-                    gscPerfRes.bestQueryCapture, gscPerfRes.statut, gscPerfRes.details, ‘Capture de la meilleure requête non générée’
+                    gscPerfRes.bestQueryCapture, gscPerfRes.statut, gscPerfRes.details, 'Capture de la meilleure requête non générée'
                 );
                 const queryTableStep = buildDerivedCaptureStep(
-                    gscPerfRes.queryPageClicksImpressionsCapture, gscPerfRes.statut, gscPerfRes.details, ‘Capture query/page/clicks/impressions non générée’
+                    gscPerfRes.queryPageClicksImpressionsCapture, gscPerfRes.statut, gscPerfRes.details, 'Capture query/page/clicks/impressions non générée'
                 );
-                await updateStep(‘gsc_meilleure_requete’, bestQueryStep.status, bestQueryStep.details, bestQueryStep.outputUrl);
-                await updateStep(‘gsc_query_page_clicks_impressions’, queryTableStep.status, queryTableStep.details, queryTableStep.outputUrl);
+                await updateStep('gsc_meilleure_requete', bestQueryStep.status, bestQueryStep.details, bestQueryStep.outputUrl);
+                await updateStep('gsc_query_page_clicks_impressions', queryTableStep.status, queryTableStep.details, queryTableStep.outputUrl);
                 if (audit.airtable_record_id) {
-                    if (gscPerfRes.capture1) await updateAirtableField(audit.airtable_record_id, ‘Img_trafic actuel1’, gscPerfRes.capture1);
-                    if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, ‘Img_trafic actuel2’, gscPerfRes.capture2);
-                    if (gscPerfRes.clics) await updateAirtableField(audit.airtable_record_id, ‘nombres de clics trafic actuel’, gscPerfRes.clics);
-                    if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, ‘Img_donnee_brute_gcs’, gscPerfRes.capture2);
-                    if (gscPerfRes.bestQueryCapture) await updateAirtableField(audit.airtable_record_id, ‘Img_meilleure_requete’, gscPerfRes.bestQueryCapture);
-                    if (gscPerfRes.queryPageClicksImpressionsCapture) await updateAirtableField(audit.airtable_record_id, ‘Img_query_page_clicks_impressions’, gscPerfRes.queryPageClicksImpressionsCapture);
+                    if (gscPerfRes.capture1) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel1', gscPerfRes.capture1);
+                    if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel2', gscPerfRes.capture2);
+                    if (gscPerfRes.clics) await updateAirtableField(audit.airtable_record_id, 'nombres de clics trafic actuel', gscPerfRes.clics);
+                    if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_donnee_brute_gcs', gscPerfRes.capture2);
+                    if (gscPerfRes.bestQueryCapture) await updateAirtableField(audit.airtable_record_id, 'Img_meilleure_requete', gscPerfRes.bestQueryCapture);
+                    if (gscPerfRes.queryPageClicksImpressionsCapture) await updateAirtableField(audit.airtable_record_id, 'Img_query_page_clicks_impressions', gscPerfRes.queryPageClicksImpressionsCapture);
                 }
 
-                await updateStep(‘gsc_coverage’, ‘EN_COURS’);
-                await updateStep(‘gsc_indexation_image’, ‘EN_COURS’);
-                await updateStep(‘gsc_problemes_indexation’, ‘EN_COURS’);
+                await updateStep('gsc_coverage', 'EN_COURS');
+                await updateStep('gsc_indexation_image', 'EN_COURS');
+                await updateStep('gsc_problemes_indexation', 'EN_COURS');
                 const gscCovRes = await captureGscCoverage(siteUrl, auditId, googleCookies);
-                await updateStep(‘gsc_coverage’, gscCovRes.statut, gscCovRes.details, gscCovRes.capture);
+                await updateStep('gsc_coverage', gscCovRes.statut, gscCovRes.details, gscCovRes.capture);
                 const indexationStep = buildDerivedCaptureStep(
-                    gscCovRes.indexationCapture, gscCovRes.statut, gscCovRes.details, ‘Capture d\’indexation GSC non générée’
+                    gscCovRes.indexationCapture, gscCovRes.statut, gscCovRes.details, 'Capture d\'indexation GSC non générée'
                 );
                 const problemIndexationStep = buildDerivedCaptureStep(
-                    gscCovRes.problemCapture, gscCovRes.statut, gscCovRes.details, ‘Capture des problèmes d\’indexation non générée’
+                    gscCovRes.problemCapture, gscCovRes.statut, gscCovRes.details, 'Capture des problèmes d\'indexation non générée'
                 );
-                await updateStep(‘gsc_indexation_image’, indexationStep.status, indexationStep.details, indexationStep.outputUrl);
-                await updateStep(‘gsc_problemes_indexation’, problemIndexationStep.status, problemIndexationStep.details, problemIndexationStep.outputUrl);
+                await updateStep('gsc_indexation_image', indexationStep.status, indexationStep.details, indexationStep.outputUrl);
+                await updateStep('gsc_problemes_indexation', problemIndexationStep.status, problemIndexationStep.details, problemIndexationStep.outputUrl);
                 if (audit.airtable_record_id) {
-                    if (gscCovRes.capture) await updateAirtableField(audit.airtable_record_id, ‘Img_urls’, gscCovRes.capture);
-                    if (gscCovRes.pagesIndexed) await updateAirtableField(audit.airtable_record_id, ‘nombres de pages indexé trafic actuel’, gscCovRes.pagesIndexed);
-                    if (gscCovRes.indexationCapture) await updateAirtableField(audit.airtable_record_id, ‘Img_indexation_gsc’, gscCovRes.indexationCapture);
-                    if (gscCovRes.problemCapture) await updateAirtableField(audit.airtable_record_id, ‘Img_probleme_indexation_gsc’, gscCovRes.problemCapture);
+                    if (gscCovRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_urls', gscCovRes.capture);
+                    if (gscCovRes.pagesIndexed) await updateAirtableField(audit.airtable_record_id, 'nombres de pages indexé trafic actuel', gscCovRes.pagesIndexed);
+                    if (gscCovRes.indexationCapture) await updateAirtableField(audit.airtable_record_id, 'Img_indexation_gsc', gscCovRes.indexationCapture);
+                    if (gscCovRes.problemCapture) await updateAirtableField(audit.airtable_record_id, 'Img_probleme_indexation_gsc', gscCovRes.problemCapture);
                 }
 
-                await updateStep(‘gsc_top_pages’, ‘EN_COURS’);
+                await updateStep('gsc_top_pages', 'EN_COURS');
                 const gscTopRes = await captureGscTopPages(siteUrl, auditId, googleCookies);
-                await updateStep(‘gsc_top_pages’, gscTopRes.statut, gscTopRes.details, gscTopRes.capture);
-                if (audit.airtable_record_id && gscTopRes.capture) await updateAirtableField(audit.airtable_record_id, ‘Img_meilleure_page’, gscTopRes.capture);
+                await updateStep('gsc_top_pages', gscTopRes.statut, gscTopRes.details, gscTopRes.capture);
+                if (audit.airtable_record_id && gscTopRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_meilleure_page', gscTopRes.capture);
             } else {
                 for (const k of [
-                    ‘gsc_performance’,
-                    ‘gsc_meilleure_requete’,
-                    ‘gsc_query_page_clicks_impressions’,
-                    ‘gsc_coverage’,
-                    ‘gsc_indexation_image’,
-                    ‘gsc_problemes_indexation’,
-                    ‘gsc_top_pages’
+                    'gsc_performance',
+                    'gsc_meilleure_requete',
+                    'gsc_query_page_clicks_impressions',
+                    'gsc_coverage',
+                    'gsc_indexation_image',
+                    'gsc_problemes_indexation',
+                    'gsc_top_pages'
                 ]) {
-                    await updateStep(k, ‘SKIP’, ‘Google OAuth2 non configuré et aucune session cookie’);
+                    await updateStep(k, 'SKIP', 'Google OAuth2 non configuré et aucune session cookie');
                 }
             }
 

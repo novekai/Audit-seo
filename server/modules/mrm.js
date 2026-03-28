@@ -7,7 +7,7 @@ import { uploadToCloudinary } from '../utils/cloudinary.js';
 import { analyzeImage } from '../utils/openai.js';
 import { sanitizeCookies } from '../utils/cookies.js';
 
-// ── AI crop helper ────────────────────────────────────────────────────────────
+// -- AI crop helper ------------------------------------------------------------
 async function cropWithAI(imagePath, prompt) {
     try {
         const response = await analyzeImage(imagePath, prompt);
@@ -30,7 +30,7 @@ async function cropWithAI(imagePath, prompt) {
     }
 }
 
-// ── Auto-login via Playwright ─────────────────────────────────────────────────
+// -- Auto-login via Playwright -------------------------------------------------
 async function loginToMrm(page, email, password) {
     console.log(`[MRM] Auto-login with credentials for: ${email}`);
     await page.goto('https://myrankingmetrics.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -62,7 +62,7 @@ async function loginToMrm(page, email, password) {
     console.log(`[MRM] Login successful — redirected to: ${currentUrl}`);
 }
 
-// ── Launch browser with appropriate auth method ───────────────────────────────
+// -- Launch browser with appropriate auth method -------------------------------
 async function launchWithAuth(authData) {
     const browser = await chromium.launch({
         headless: true,

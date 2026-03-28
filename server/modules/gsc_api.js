@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import sharp from 'sharp';
 import { uploadToCloudinary } from '../utils/cloudinary.js';
 
-// ── OAuth2 client for Google Search Console API ──────────────────────────────
+// -- OAuth2 client for Google Search Console API ------------------------------
 function gscAuth() {
     const oauth2 = new google.auth.OAuth2(
         process.env.GOOGLE_CLIENT_ID,
@@ -24,7 +24,7 @@ function searchConsoleClient() {
     return google.searchconsole({ version: 'v1', auth: gscAuth() });
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// -- Helpers ------------------------------------------------------------------
 
 function getTmpDir() {
     return process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
@@ -60,7 +60,7 @@ function dateDaysAgo(days) {
     return d.toISOString().split('T')[0];
 }
 
-// ── Resolve site URL for API (try https:// and sc-domain:) ──────────────────
+// -- Resolve site URL for API (try https:// and sc-domain:) ------------------
 async function resolveSiteUrl(wm, domain) {
     const candidates = [
         `https://${domain}/`,
@@ -93,7 +93,7 @@ async function resolveSiteUrl(wm, domain) {
     return candidates[0]; // fallback
 }
 
-// ── HTML rendering + screenshot ─────────────────────────────────────────────
+// -- HTML rendering + screenshot ---------------------------------------------
 
 function renderHtmlTable({ title, headers, rows, subtitle }) {
     const ths = headers.map(h => `<th>${escapeHtml(h)}</th>`).join('');
@@ -442,7 +442,7 @@ export async function captureGscPerformanceAPI(siteUrl, auditId) {
         const startDate = dateDaysAgo(30);
         const endDate = dateDaysAgo(1);
 
-        // ── Fetch aggregate metrics ──
+        // -- Fetch aggregate metrics --
         console.log(`[GSC-API] Fetching performance for: ${siteUrlResolved}`);
         const { data: summaryData } = await sc.searchanalytics.query({
             siteUrl: siteUrlResolved,
@@ -456,7 +456,7 @@ export async function captureGscPerformanceAPI(siteUrl, auditId) {
 
         result.clics = formatNumber(totalClicks);
 
-        // ── Capture 1: Summary metrics cards ──
+        // -- Capture 1: Summary metrics cards --
         const metricsHtml = renderHtmlMetricCards({
             title: 'Performance — Google Search Console',
             subtitle: `${new Date(startDate).toLocaleDateString('fr-FR')} — ${new Date(endDate).toLocaleDateString('fr-FR')}`,
@@ -469,7 +469,7 @@ export async function captureGscPerformanceAPI(siteUrl, auditId) {
         });
         result.capture1 = await renderAndUpload(metricsHtml, `audit-results/gsc-perf1-${auditId}`);
 
-        // ── Fetch top queries ──
+        // -- Fetch top queries --
         const { data: queryData } = await sc.searchanalytics.query({
             siteUrl: siteUrlResolved,
             requestBody: {
@@ -488,7 +488,7 @@ export async function captureGscPerformanceAPI(siteUrl, auditId) {
             formatPosition(r.position)
         ]);
 
-        // ── Capture 2: Query table ──
+        // -- Capture 2: Query table --
         if (queryRows.length > 0) {
             const queryTableHtml = renderHtmlTable({
                 title: 'Top requêtes — Google Search Console',
@@ -499,7 +499,7 @@ export async function captureGscPerformanceAPI(siteUrl, auditId) {
             result.capture2 = await renderAndUpload(queryTableHtml, `audit-results/gsc-perf2-${auditId}`);
             result.queryPageClicksImpressionsCapture = result.capture2;
 
-            // ── Best query capture (first row only) ──
+            // -- Best query capture (first row only) --
             const bestQueryHtml = renderHtmlTable({
                 title: 'Meilleure requête — Google Search Console',
                 headers: ['Requête', 'Clics', 'Impressions', 'CTR', 'Position'],
@@ -552,7 +552,7 @@ export async function captureGscCoverageAPI(siteUrl, auditId) {
 
         console.log(`[GSC-API] Pages appearing in search: ${indexedCount}`);
 
-        // ── Capture: Indexation summary ──
+        // -- Capture: Indexation summary --
         const metricsHtml = renderHtmlMetricCards({
             title: 'Indexation — Google Search Console',
             subtitle: `Propriété : ${siteUrlResolved} — 90 derniers jours`,
@@ -563,7 +563,7 @@ export async function captureGscCoverageAPI(siteUrl, auditId) {
         result.capture = await renderAndUpload(metricsHtml, `audit-results/gsc-coverage-${auditId}`);
         result.indexationCapture = result.capture;
 
-        // ── Try URL Inspection for a sample to check indexation problems ──
+        // -- Try URL Inspection for a sample to check indexation problems --
         const sampleUrls = indexedPages.slice(0, 5).map(r => r.keys[0]);
         const problems = [];
 
