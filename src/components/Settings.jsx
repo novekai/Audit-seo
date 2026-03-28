@@ -133,14 +133,21 @@ const Settings = () => {
         if (!confirm('Deconnecter votre compte Google ?')) return;
         try {
             const token = localStorage.getItem('token');
-            await fetch('/api/credentials/google', {
+            const res = await fetch('/api/credentials/google', {
                 method: 'DELETE',
                 headers: { 'Authorization': `Bearer ${token}` },
                 credentials: 'include'
             });
-            setMessages(m => ({ ...m, google: { type: 'success', text: 'Compte Google deconnecte.' } }));
-            fetchStatus();
-        } catch { }
+            if (res.ok) {
+                setMessages(m => ({ ...m, google: { type: 'success', text: 'Compte Google deconnecte.' } }));
+                await fetchStatus();
+            } else {
+                const data = await res.json().catch(() => ({}));
+                setMessages(m => ({ ...m, google: { type: 'error', text: data.error || 'Erreur lors de la deconnexion' } }));
+            }
+        } catch {
+            setMessages(m => ({ ...m, google: { type: 'error', text: 'Erreur reseau' } }));
+        }
     };
 
     // ── Google Card (OAuth2, per-user) ──
@@ -178,7 +185,10 @@ const Settings = () => {
                             <div className="flex items-center gap-2">
                                 <Zap className="w-3.5 h-3.5 text-green-500" />
                                 <span className="text-xs text-green-600">
-                                    {`Connecte le ${new Date(status.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}`}
+                                    {status.created_at && !isNaN(new Date(status.created_at))
+                                        ? `Connecte le ${new Date(status.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}`
+                                        : 'Compte connecte'
+                                    }
                                 </span>
                             </div>
                             <button

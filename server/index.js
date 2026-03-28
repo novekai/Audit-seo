@@ -877,10 +877,14 @@ app.delete('/api/credentials/:service', authenticateToken, async (req, res) => {
     const userId = req.user.userId;
     if (!db) return res.status(503).json({ error: 'Base de données en cours de chargement' });
 
+    if (!['mrm', 'ubersuggest', 'google'].includes(service)) {
+        return res.status(400).json({ error: 'Service invalide' });
+    }
+
     try {
         await db.run('DELETE FROM service_credentials WHERE user_id = ? AND service = ?', [userId, service]);
         console.log(`[CREDENTIALS] Deleted credentials for ${service} (user: ${userId})`);
-        res.json({ message: `Identifiants ${service} supprimés` });
+        res.json({ success: true, message: `Identifiants ${service} supprimes` });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -888,63 +892,53 @@ app.delete('/api/credentials/:service', authenticateToken, async (req, res) => {
 
 app.get('/api/credentials/status', authenticateToken, async (req, res) => {
     const userId = req.user.userId;
-    if (!db) return res.status(503).json({ error: 'Base de données en cours de chargement' });
+    if (!db) return res.status(503).json({ error: 'Base de donnees en cours de chargement' });
 
     try {
-        // Get credential-based services
-        const credentials = await db.all(
-            'SELECT service, auth_type, status, created_at, updated_at FROM service_credentials WHERE user_id = ? AND status = ?',
-            [userId, 'active']
+        const result = [];
+
+        // Google: check per-user token first
+        const googleCred = await db.get(
+            'SELECT created_at FROM service_credentials WHERE user_id = ? AND service = ?',
+            [userId, 'google']
         );
-
-        // Get legacy cookie-based sessions
-        const sessions = await db.all(
-            'SELECT service, created_at FROM user_sessions WHERE user_id = ? ORDER BY created_at DESC',
-            [userId]
-        );
-
-        // Check Google GSC OAuth status (server-level, not per-user)
-        const googleConfigured = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN);
-
-        const result = [
-            {
-                service: 'google',
-                auth_type: 'oauth2',
-                status: googleConfigured ? 'active' : 'not_configured',
-                managed: 'server'
-            }
-        ];
-
-        // Add credential-based services
-        for (const cred of credentials) {
+        const googleConfigured = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+        if (googleCred) {
+            result.push({ service: 'google', status: 'active', auth_type: 'oauth2', created_at: googleCred.created_at });
+        } else {
             result.push({
-                service: cred.service,
-                auth_type: cred.auth_type,
-                status: cred.status,
-                created_at: cred.created_at,
-                updated_at: cred.updated_at,
-                managed: 'user'
+                service: 'google',
+                status: 'not_configured',
+                auth_type: 'oauth2',
+                can_connect: googleConfigured
             });
         }
 
-        // Add legacy cookie sessions (only if no credential exists for that service)
-        const credServices = new Set(credentials.map(c => c.service));
-        for (const sess of sessions) {
-            if (!credServices.has(sess.service) && sess.service !== 'google') {
-                result.push({
-                    service: sess.service,
-                    auth_type: 'cookies',
-                    status: 'active',
-                    created_at: sess.created_at,
-                    managed: 'user',
-                    legacy: true
-                });
+        // MRM & Ubersuggest: check credentials table, then legacy cookies
+        for (const svc of ['mrm', 'ubersuggest']) {
+            const cred = await db.get(
+                'SELECT created_at, updated_at FROM service_credentials WHERE user_id = ? AND service = ?',
+                [userId, svc]
+            );
+            if (cred) {
+                result.push({ service: svc, status: 'active', auth_type: 'password', created_at: cred.created_at });
+            } else {
+                const session = await db.get(
+                    'SELECT created_at FROM user_sessions WHERE user_id = ? AND service = ?',
+                    [userId, svc]
+                );
+                if (session) {
+                    result.push({ service: svc, status: 'active', auth_type: 'cookie', legacy: true, created_at: session.created_at });
+                } else {
+                    result.push({ service: svc, status: 'not_configured' });
+                }
             }
         }
 
         res.json(result);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error('[CREDENTIALS] Status error:', err);
+        res.status(500).json({ error: 'Erreur serveur' });
     }
 });
 
@@ -1680,197 +1674,6 @@ app.get('/api/auth/google/callback', async (req, res) => {
     } catch (err) {
         console.error('[GOOGLE OAUTH] Callback error:', err);
         return res.redirect('/?google_auth=error&reason=server_error');
-    }
-});
-
-// Disconnect Google account
-app.delete('/api/credentials/google', authenticateToken, async (req, res) => {
-    const userId = req.user.userId;
-    if (!db) return res.status(503).json({ error: 'Base de donnees en cours de chargement' });
-
-    try {
-        await db.run('DELETE FROM service_credentials WHERE user_id = ? AND service = ?', [userId, 'google']);
-        res.json({ success: true });
-    } catch (err) {
-        console.error('[GOOGLE OAUTH] Disconnect error:', err);
-        res.status(500).json({ error: 'Erreur serveur' });
-    }
-});
-
-// -- Credential endpoints (MRM, Ubersuggest) --
-
-// Save encrypted credentials
-app.post('/api/credentials/:service', authenticateToken, async (req, res) => {
-    const { service } = req.params;
-    const { email, password } = req.body;
-    const userId = req.user.userId;
-
-    if (!['mrm', 'ubersuggest'].includes(service)) {
-        return res.status(400).json({ error: 'Service invalide' });
-    }
-    if (!email || !password) {
-        return res.status(400).json({ error: 'Email et mot de passe requis' });
-    }
-    if (!db) return res.status(503).json({ error: 'Base de donnees en cours de chargement' });
-
-    try {
-        const encryptedData = encrypt(JSON.stringify({ email, password }));
-        const id = uuidv4();
-        await db.run(
-            `INSERT INTO service_credentials (id, user_id, service, encrypted_data)
-             VALUES (?, ?, ?, ?)
-             ON CONFLICT (user_id, service) DO UPDATE SET
-               encrypted_data = excluded.encrypted_data,
-               updated_at = CURRENT_TIMESTAMP`,
-            [id, userId, service, encryptedData]
-        );
-        res.json({ success: true });
-    } catch (err) {
-        console.error('[CREDENTIALS] Save error:', err);
-        res.status(500).json({ error: 'Erreur serveur' });
-    }
-});
-
-// Delete credentials
-app.delete('/api/credentials/:service', authenticateToken, async (req, res) => {
-    const { service } = req.params;
-    const userId = req.user.userId;
-    if (!db) return res.status(503).json({ error: 'Base de donnees en cours de chargement' });
-
-    try {
-        await db.run('DELETE FROM service_credentials WHERE user_id = ? AND service = ?', [userId, service]);
-        res.json({ success: true });
-    } catch (err) {
-        console.error('[CREDENTIALS] Delete error:', err);
-        res.status(500).json({ error: 'Erreur serveur' });
-    }
-});
-
-// Status of all services (Google OAuth2 from env + credentials + legacy cookies)
-app.get('/api/credentials/status', authenticateToken, async (req, res) => {
-    const userId = req.user.userId;
-    if (!db) return res.status(503).json({ error: 'Base de donnees en cours de chargement' });
-
-    try {
-        const result = [];
-
-        // Google: check per-user token first, then env var fallback
-        const googleCred = await db.get(
-            'SELECT created_at FROM service_credentials WHERE user_id = ? AND service = ?',
-            [userId, 'google']
-        );
-        const googleConfigured = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
-        if (googleCred) {
-            result.push({ service: 'google', status: 'active', auth_type: 'oauth2', created_at: googleCred.created_at });
-        } else {
-            result.push({
-                service: 'google',
-                status: 'not_configured',
-                auth_type: 'oauth2',
-                can_connect: googleConfigured
-            });
-        }
-
-        // MRM & Ubersuggest: check credentials table, then legacy cookies
-        for (const svc of ['mrm', 'ubersuggest']) {
-            const cred = await db.get(
-                'SELECT created_at, updated_at FROM service_credentials WHERE user_id = ? AND service = ?',
-                [userId, svc]
-            );
-            if (cred) {
-                result.push({ service: svc, status: 'active', auth_type: 'password', created_at: cred.created_at });
-            } else {
-                const session = await db.get(
-                    'SELECT created_at FROM user_sessions WHERE user_id = ? AND service = ?',
-                    [userId, svc]
-                );
-                if (session) {
-                    result.push({ service: svc, status: 'active', auth_type: 'cookie', legacy: true, created_at: session.created_at });
-                } else {
-                    result.push({ service: svc, status: 'not_configured' });
-                }
-            }
-        }
-
-        res.json(result);
-    } catch (err) {
-        console.error('[CREDENTIALS] Status error:', err);
-        res.status(500).json({ error: 'Erreur serveur' });
-    }
-});
-
-// Test credentials (login via Playwright)
-app.post('/api/credentials/test/:service', authenticateToken, async (req, res) => {
-    const { service } = req.params;
-    const userId = req.user.userId;
-
-    if (!['mrm', 'ubersuggest'].includes(service)) {
-        return res.status(400).json({ error: 'Service invalide' });
-    }
-    if (!db) return res.status(503).json({ error: 'Base de donnees en cours de chargement' });
-
-    try {
-        const row = await db.get(
-            'SELECT encrypted_data FROM service_credentials WHERE user_id = ? AND service = ?',
-            [userId, service]
-        );
-        if (!row) {
-            return res.status(404).json({ error: 'Aucun identifiant enregistre pour ce service' });
-        }
-
-        const { email, password } = JSON.parse(decrypt(row.encrypted_data));
-
-        const { chromium } = await import('playwright');
-        const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
-        const context = await browser.newContext({
-            viewport: { width: 1400, height: 900 },
-            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        });
-        const page = await context.newPage();
-
-        try {
-            if (service === 'mrm') {
-                await page.goto('https://myrankingmetrics.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
-                await page.waitForTimeout(2000);
-                const emailInput = page.locator('input[name="email"], input[type="email"], input[name="_username"]').first();
-                await emailInput.waitFor({ state: 'visible', timeout: 10000 });
-                await emailInput.fill(email);
-                const passwordInput = page.locator('input[name="password"], input[type="password"], input[name="_password"]').first();
-                await passwordInput.fill(password);
-                const submitBtn = page.locator('button[type="submit"], input[type="submit"]').first();
-                await submitBtn.click();
-                await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
-                await page.waitForTimeout(3000);
-                const currentUrl = page.url();
-                if (currentUrl.includes('login') || currentUrl.includes('signin') || currentUrl.includes('connexion')) {
-                    throw new Error('Login failed');
-                }
-            } else {
-                await page.goto('https://app.neilpatel.com/en/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
-                await page.waitForTimeout(2000);
-                const emailInput = page.locator('input[type="email"], input[name="email"]').first();
-                await emailInput.waitFor({ state: 'visible', timeout: 10000 });
-                await emailInput.fill(email);
-                const passwordInput = page.locator('input[type="password"], input[name="password"]').first();
-                await passwordInput.fill(password);
-                const submitBtn = page.locator('button[type="submit"]').first();
-                await submitBtn.click();
-                await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
-                await page.waitForTimeout(5000);
-                const currentUrl = page.url();
-                if (currentUrl.includes('login') || currentUrl.includes('signin')) {
-                    throw new Error('Login failed');
-                }
-            }
-            res.json({ success: true, message: 'Connexion reussie !' });
-        } catch (loginErr) {
-            res.json({ success: false, error: 'Echec de connexion : ' + loginErr.message });
-        } finally {
-            await browser.close();
-        }
-    } catch (err) {
-        console.error('[CREDENTIALS] Test error:', err);
-        res.status(500).json({ error: 'Erreur serveur' });
     }
 });
 
