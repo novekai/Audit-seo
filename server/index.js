@@ -1601,10 +1601,17 @@ const GOOGLE_SCOPES = [
 ];
 
 function googleOAuth2Client() {
+    let base = process.env.RAILWAY_STATIC_URL || process.env.VITE_API_URL || 'http://localhost:5000';
+    // Ensure the base URL has a protocol
+    if (base && !base.startsWith('http')) {
+        base = 'https://' + base;
+    }
+    // Remove trailing slash
+    base = base.replace(/\/+$/, '');
     return new google.auth.OAuth2(
         process.env.GOOGLE_CLIENT_ID,
         process.env.GOOGLE_CLIENT_SECRET,
-        (process.env.RAILWAY_STATIC_URL || process.env.VITE_API_URL || 'http://localhost:5000') + '/api/auth/google/callback'
+        base + '/api/auth/google/callback'
     );
 }
 
