@@ -15,6 +15,7 @@ import {
     getAirtableRecord,
     readGeneratedActionPlanUrl,
     readGeneratedSlidesUrl,
+    updateAirtableField,
     updateAirtableStatut
 } from './airtable.js';
 import { createServer } from 'http';
@@ -1396,14 +1397,7 @@ app.post('/api/audits/:id/generate-action-plan', authenticateToken, async (req, 
             });
         }
 
-        const { email } = req.body || {};
-        if (!email || typeof email !== 'string' || !email.trim()) {
-            return res.status(400).json({
-                error: "Une adresse e-mail est requise pour partager le Google Sheet plan d’actions."
-            });
-        }
-
-        if (audit.action_plan_generation_status === 'EN_COURS' && !isActionPlanGenerationLockStale(audit)) {
+        if (audit.action_plan_generation_status === ‘EN_COURS’ && !isActionPlanGenerationLockStale(audit)) {
             return res.status(409).json({
                 error: "Une génération du Google Sheet plan d’actions est déjà en cours pour cet audit."
             });
@@ -1434,7 +1428,7 @@ app.post('/api/audits/:id/generate-action-plan', authenticateToken, async (req, 
 
             for (let attempt = 0; attempt <= ACTION_PLAN_MAX_RETRIES; attempt++) {
                 try {
-                    actionPlanResult = await generateActionPlanSheet(audit, email.trim());
+                    actionPlanResult = await generateActionPlanSheet(audit);
                     break;
                 } catch (retryErr) {
                     lastActionPlanErr = retryErr;
@@ -1460,8 +1454,13 @@ app.post('/api/audits/:id/generate-action-plan', authenticateToken, async (req, 
                 [spreadsheetUrl, 'PRET', auditId]
             );
 
-            const updatedAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
-            io.emit('audit:update', updatedAudit);
+            const updatedAudit = await db.get(‘SELECT * FROM audits WHERE id = ?’, [auditId]);
+            io.emit(‘audit:update’, updatedAudit);
+
+            if (audit.airtable_record_id) {
+                updateAirtableField(audit.airtable_record_id, "Lien_plan_d'action", spreadsheetUrl)
+                    .catch(err => console.error(`[ACTION PLAN] Airtable sync error:`, err.message));
+            }
 
             return res.json({
                 message: sourceTabsCopied > 0

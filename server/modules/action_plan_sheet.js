@@ -45,10 +45,6 @@ function createSheetsClient(auth) {
     return google.sheets({ version: 'v4', auth });
 }
 
-function createDriveClient(auth) {
-    return google.drive({ version: 'v3', auth });
-}
-
 function extractSpreadsheetId(url) {
     if (!url) return null;
     const match = String(url).match(/\/d\/([a-zA-Z0-9-_]+)/);
@@ -425,14 +421,13 @@ async function loadValuesByTab(sheets, sheetUrl, tabNames) {
     return valuesByTab;
 }
 
-export async function generateActionPlanSheet(audit, email) {
+export async function generateActionPlanSheet(audit) {
     if (!audit) {
         throw new Error("Audit introuvable pour la génération du plan d'actions.");
     }
 
     const auth = createGoogleAuth();
     const sheets = createSheetsClient(auth);
-    const drive = createDriveClient(auth);
     const createResponse = await sheets.spreadsheets.create({
         requestBody: {
             properties: {
@@ -449,22 +444,6 @@ export async function generateActionPlanSheet(audit, email) {
 
     if (!spreadsheetId) {
         throw new Error("La création du Google Sheet plan d'actions a échoué.");
-    }
-
-    try {
-        await drive.permissions.create({
-            fileId: spreadsheetId,
-            requestBody: {
-                type: 'user',
-                role: 'writer',
-                emailAddress: email
-            },
-            sendNotificationEmail: true
-        });
-    } catch (err) {
-        throw new Error(
-            `Le Google Sheet a bien été créé, mais le partage avec ${email} a échoué: ${err.message}`
-        );
     }
 
     const planValuesByTab = await loadValuesByTab(sheets, audit.sheet_plan_url, PLAN_SOURCE_TAB_NAMES);
