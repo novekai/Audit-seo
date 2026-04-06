@@ -109,7 +109,7 @@ function getStepStatusLabel(status) {
         case 'WARNING':
             return 'Réussi avec réserve';
         case 'SKIP':
-            return 'Non disponible';
+            return 'Ignoré';
         case 'FAILED':
         case 'ERROR':
         case 'ERREUR':
@@ -149,11 +149,14 @@ function simplifyReason(message) {
     if (/session google/i.test(text) || /redirigé vers login/i.test(text)) {
         return 'Connexion Google expirée';
     }
+    if (/onglet vide/i.test(text)) {
+        return "L'onglet existe mais ne contient aucune donnée";
+    }
     if (/onglet .*introuvable/i.test(text) || /^onglet introuvable$/i.test(text)) {
-        return 'Onglet manquant dans le Google Sheet';
+        return "L'onglet n'existe pas dans le Google Sheet source";
     }
     if (/aucun match|aucune donnée/i.test(text)) {
-        return 'Aucune donnée exploitable trouvée';
+        return 'Aucune donnée exploitable dans cet onglet';
     }
     if (/lien google sheet plan d'action non fourni/i.test(text)) {
         return 'Lien du plan d’action manquant';
@@ -161,8 +164,11 @@ function simplifyReason(message) {
     if (/lien google sheet audit non fourni|lien google sheet non fourni/i.test(text)) {
         return 'Lien Google Sheet manquant';
     }
+    if (/identifiants mrm non configur/i.test(text)) {
+        return 'Identifiants MRM non configurés — ajoutez-les dans les paramètres';
+    }
     if (/session mrm/i.test(text)) {
-        return 'Connexion My Ranking Metrics indisponible';
+        return 'Session MRM expirée — reconnectez-vous dans les paramètres';
     }
     if (/session ubersuggest/i.test(text)) {
         return 'Connexion Ubersuggest indisponible';
