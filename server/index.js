@@ -1413,7 +1413,7 @@ app.post('/api/audits/:id/generate-action-plan', authenticateToken, async (req, 
             });
         }
 
-        if (audit.action_plan_generation_status === ‘EN_COURS’ && !isActionPlanGenerationLockStale(audit)) {
+        if (audit.action_plan_generation_status === 'EN_COURS' && !isActionPlanGenerationLockStale(audit)) {
             return res.status(409).json({
                 error: "Une génération du Google Sheet plan d’actions est déjà en cours pour cet audit."
             });
@@ -1470,8 +1470,8 @@ app.post('/api/audits/:id/generate-action-plan', authenticateToken, async (req, 
                 [spreadsheetUrl, 'PRET', auditId]
             );
 
-            const updatedAudit = await db.get(‘SELECT * FROM audits WHERE id = ?’, [auditId]);
-            io.emit(‘audit:update’, updatedAudit);
+            const updatedAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
+            io.emit('audit:update', updatedAudit);
 
             if (audit.airtable_record_id) {
                 updateAirtableField(audit.airtable_record_id, "Lien_plan_d'action", spreadsheetUrl)
