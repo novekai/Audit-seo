@@ -198,10 +198,10 @@ async function readTab(sheets, spreadsheetId, tabName) {
             range: `'${tabName.replace(/'/g, "''")}'!A1:ZZ`,
             valueRenderOption: "FORMATTED_VALUE",
         });
-        return res?.data?.values || [];
+        return { values: res?.data?.values || [], found: true };
     } catch (e) {
         console.error(`[SHEETS-API] Erreur lecture onglet "${tabName}": ${e.message}`);
-        return [];
+        return { values: [], found: false };
     }
 }
 
@@ -270,8 +270,10 @@ function sortRows(rows, colIdx, sort) {
     });
 }
 
-function buildTable(values, cfg) {
-    if (!values || values.length === 0) return { table: null, reason: "Onglet vide / introuvable" };
+function buildTable(values, cfg, { found = true } = {}) {
+    if (!values || values.length === 0) {
+        return { table: null, reason: found ? "Onglet vide — aucune donnée dans cet onglet" : `Onglet "${cfg.tabName}" introuvable dans le Google Sheet` };
+    }
 
     const trimmed = trimEmptyColumns(values);
     const header = trimmed[0] || [];
@@ -447,8 +449,8 @@ export async function auditGoogleSheetsAPI(sheetAuditUrl, sheetPlanUrl, auditId)
         if (!spreadsheetId) continue;
 
         try {
-            const values = await readTab(sheets, spreadsheetId, cfg.tabName);
-            const built = buildTable(values, cfg);
+            const { values, found } = await readTab(sheets, spreadsheetId, cfg.tabName);
+            const built = buildTable(values, cfg, { found });
 
             if (!built.table) {
                 results[cfg.airtableField] = { statut: "SKIP", details: built.reason || "Aucune donnée" };

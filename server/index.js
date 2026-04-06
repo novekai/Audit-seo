@@ -983,10 +983,20 @@ app.post('/api/credentials/test/:service', authenticateToken, async (req, res) =
             page.setDefaultTimeout(30000);
 
             if (service === 'mrm') {
-                await page.goto('https://myrankingmetrics.com/login', { waitUntil: 'domcontentloaded' });
+                try {
+                    await page.goto('https://myrankingmetrics.com/login', { waitUntil: 'domcontentloaded' });
+                } catch (navErr) {
+                    return res.json({ success: false, error: `La page de login MRM est inaccessible: ${navErr.message}` });
+                }
                 await page.waitForTimeout(2000);
+
                 const emailInput = page.locator('input[name="email"], input[type="email"], input[name="_username"]').first();
+                const emailVisible = await emailInput.isVisible().catch(() => false);
+                if (!emailVisible) {
+                    return res.json({ success: false, error: "Le champ email est introuvable sur la page MRM. Le site a peut-être changé de structure." });
+                }
                 await emailInput.fill(email);
+
                 const passwordInput = page.locator('input[name="password"], input[type="password"], input[name="_password"]').first();
                 await passwordInput.fill(password);
                 await page.locator('button[type="submit"], input[type="submit"]').first().click();
@@ -994,7 +1004,13 @@ app.post('/api/credentials/test/:service', authenticateToken, async (req, res) =
                 await page.waitForTimeout(3000);
 
                 if (page.url().includes('login') || page.url().includes('connexion')) {
-                    return res.json({ success: false, error: 'Login échoué — vérifiez vos identifiants' });
+                    const pageText = await page.textContent('body').catch(() => '');
+                    const hasInvalidMsg = /incorrect|invalide|erreur|error|wrong|invalid/i.test(pageText);
+                    const reason = hasInvalidMsg
+                        ? "Email ou mot de passe incorrect"
+                        : "Toujours sur la page de login apres soumission";
+                    console.warn(`[CREDENTIALS] Test MRM echoue pour ${email}: ${reason}`);
+                    return res.json({ success: false, error: `Connexion MRM echouee — ${reason}` });
                 }
             } else if (service === 'ubersuggest') {
                 await page.goto('https://app.neilpatel.com/en/login', { waitUntil: 'domcontentloaded' });

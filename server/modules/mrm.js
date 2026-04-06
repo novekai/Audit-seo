@@ -32,22 +32,44 @@ async function cropWithAI(imagePath, prompt) {
 
 // -- Auto-login via Playwright -------------------------------------------------
 async function loginToMrm(page, email, password) {
-    console.log(`[MRM] Auto-login with credentials for: ${email}`);
-    await page.goto('https://myrankingmetrics.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    console.log(`[MRM] Tentative de connexion automatique pour: ${email}`);
+
+    try {
+        await page.goto('https://myrankingmetrics.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    } catch (err) {
+        throw new Error(`[MRM] La page de login MRM est inaccessible (timeout ou erreur réseau): ${err.message}`);
+    }
     await page.waitForTimeout(2000);
 
     // Fill email
     const emailInput = page.locator('input[name="email"], input[type="email"], input[name="_username"]').first();
-    await emailInput.waitFor({ state: 'visible', timeout: 10000 });
+    try {
+        await emailInput.waitFor({ state: 'visible', timeout: 10000 });
+    } catch {
+        throw new Error(`[MRM] Le champ email est introuvable sur la page de login. La page MRM a peut-être changé de structure.`);
+    }
     await emailInput.fill(email);
+    console.log(`[MRM] Email renseigné.`);
 
     // Fill password
     const passwordInput = page.locator('input[name="password"], input[type="password"], input[name="_password"]').first();
+    try {
+        await passwordInput.waitFor({ state: 'visible', timeout: 5000 });
+    } catch {
+        throw new Error(`[MRM] Le champ mot de passe est introuvable sur la page de login. La page MRM a peut-être changé de structure.`);
+    }
     await passwordInput.fill(password);
+    console.log(`[MRM] Mot de passe renseigné.`);
 
     // Submit
     const submitBtn = page.locator('button[type="submit"], input[type="submit"]').first();
+    try {
+        await submitBtn.waitFor({ state: 'visible', timeout: 5000 });
+    } catch {
+        throw new Error(`[MRM] Le bouton de soumission est introuvable sur la page de login. La page MRM a peut-être changé de structure.`);
+    }
     await submitBtn.click();
+    console.log(`[MRM] Formulaire soumis, attente de redirection...`);
 
     // Wait for navigation after login
     await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
@@ -56,10 +78,15 @@ async function loginToMrm(page, email, password) {
     // Verify login succeeded
     const currentUrl = page.url();
     if (currentUrl.includes('login') || currentUrl.includes('signin') || currentUrl.includes('connexion')) {
-        throw new Error(`MRM login failed — still on login page: ${currentUrl}`);
+        const pageContent = await page.textContent('body').catch(() => '');
+        const hasErrorMsg = /incorrect|invalide|erreur|error|wrong|invalid/i.test(pageContent);
+        if (hasErrorMsg) {
+            throw new Error(`[MRM] Identifiants incorrects — email ou mot de passe invalide (URL: ${currentUrl})`);
+        }
+        throw new Error(`[MRM] Connexion échouée — toujours sur la page de login après soumission (URL: ${currentUrl})`);
     }
 
-    console.log(`[MRM] Login successful — redirected to: ${currentUrl}`);
+    console.log(`[MRM] Connexion réussie — redirigé vers: ${currentUrl}`);
 }
 
 // -- Launch browser with appropriate auth method -------------------------------
@@ -100,7 +127,8 @@ export async function captureMrmProfondeur(mrmReportUrl, auditId, authData) {
 
     if (!hasAuth) {
         result.statut = 'SKIP';
-        result.details = 'Identifiants MRM non configurés';
+        result.details = 'Identifiants MRM non configurés — ajoutez vos identifiants dans les paramètres';
+        console.warn('[MRM] Aucun identifiant configuré (ni credentials, ni cookies). Étape ignorée.');
         return result;
     }
 
@@ -116,8 +144,8 @@ export async function captureMrmProfondeur(mrmReportUrl, auditId, authData) {
         console.log(`[MRM] Current URL after navigation: ${currentUrl}`);
         if (currentUrl.includes('login') || currentUrl.includes('signin') || currentUrl.includes('connexion')) {
             result.statut = 'SKIP';
-            result.details = `Session MRM expirée — redirigé vers: ${currentUrl}`;
-            console.error(`[MRM] Session expired — redirected to: ${currentUrl}`);
+            result.details = 'Session MRM expirée — reconnectez-vous dans les paramètres ou vérifiez vos identifiants';
+            console.error(`[MRM] Session expirée ou identifiants invalides — redirigé vers la page de login: ${currentUrl}`);
             return result;
         }
 
@@ -177,7 +205,10 @@ CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
         result.statut = 'SUCCESS';
     } catch (e) {
         result.details = e.message;
-        console.error('[MRM] Error:', e.message);
+        console.error(`[MRM] Erreur lors de la capture MRM: ${e.message}`);
+        if (e.message.includes('Timeout') || e.message.includes('timeout')) {
+            console.error('[MRM] La page MRM a mis trop de temps à répondre. Vérifiez que le lien du rapport est correct et que le site MRM est accessible.');
+        }
     } finally { await browser.close(); }
     return result;
 }
