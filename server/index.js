@@ -1387,7 +1387,7 @@ app.post('/api/audits/:id/generate-action-plan', authenticateToken, async (req, 
 
         if (!audit.google_slides_url) {
             return res.status(409).json({
-                error: 'Le Google Slides doit être généré avant de lancer le Google Sheet plan d’actions.'
+                error: "Le Google Slides doit être généré avant de lancer le Google Sheet plan d’actions."
             });
         }
 
