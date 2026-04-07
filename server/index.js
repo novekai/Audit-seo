@@ -1476,6 +1476,7 @@ app.post('/api/audits/:id/generate-action-plan', authenticateToken, async (req, 
             if (audit.airtable_record_id) {
                 const airtableUpdates = [
                     updateAirtableField(audit.airtable_record_id, "Lien_plan_d'action", spreadsheetUrl),
+                    updateAirtableField(audit.airtable_record_id, "Img_planD'action", spreadsheetUrl),
                     ...Object.entries(airtableSheetLinks).map(([fieldName, url]) =>
                         updateAirtableField(audit.airtable_record_id, fieldName, url)
                     )

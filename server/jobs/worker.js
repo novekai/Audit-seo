@@ -269,7 +269,12 @@ export const initWorker = (io, db) => {
                         if (stepKey) {
                             await updateStep(stepKey, res.statut, res.details, res.capture);
                         }
-                        if (res.capture && res.statut === "SUCCESS" && audit.airtable_record_id) {
+                        if (
+                            fieldId !== "Img_planD'action" &&
+                            res.capture &&
+                            res.statut === "SUCCESS" &&
+                            audit.airtable_record_id
+                        ) {
                             try {
                                 await updateAirtableField(audit.airtable_record_id, fieldId, res.capture);
                             } catch (e) {
