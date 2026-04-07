@@ -13,6 +13,7 @@ const ACTION_PLAN_HEADERS = [[
 
 const PLAN_SOURCE_TAB_NAMES = [
     "Synthèse Audit - Plan d'action",
+    'Contenu',
     'Requêtes Clés / Calédito',
     'Données Images',
     'Longueur de page'
@@ -25,6 +26,24 @@ const AUDIT_RULE_TABS = [
     'Doublons H1',
     'Balises H1-H6',
     'Nb mots body'
+];
+
+const ACTION_PLAN_OUTPUT_TAB_CONFIGS = [
+    {
+        sourceTabName: 'Contenu',
+        targetTitle: 'Contenu',
+        airtableField: 'Lien_contenu'
+    },
+    {
+        sourceTabName: 'Données Images',
+        targetTitle: 'Analyse Images',
+        airtableField: 'Lien_analyse_image'
+    },
+    {
+        sourceTabName: 'Longueur de page',
+        targetTitle: 'Longueur de page',
+        airtableField: 'Lien_longueur_page'
+    }
 ];
 
 function createGoogleAuth() {
@@ -49,6 +68,14 @@ function extractSpreadsheetId(url) {
     if (!url) return null;
     const match = String(url).match(/\/d\/([a-zA-Z0-9-_]+)/);
     return match ? match[1] : null;
+}
+
+function buildGoogleSheetRangeUrl(spreadsheetId, sheetId, range = 'A1') {
+    return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit#gid=${sheetId}&range=${encodeURIComponent(range)}`;
+}
+
+function buildA1Range(sheetTitle, range) {
+    return `'${String(sheetTitle).replace(/'/g, "''")}'!${range}`;
 }
 
 function normalizeText(value) {
@@ -347,7 +374,10 @@ function buildDefaultActionRows(valuesByTab) {
         }
     }
 
-    const queriesValues = extractRuleInput(valuesByTab, 'Requêtes Clés / Calédito');
+    const contentValues = extractRuleInput(valuesByTab, 'Contenu');
+    const queriesValues = contentValues.length > 0
+        ? contentValues
+        : extractRuleInput(valuesByTab, 'Requêtes Clés / Calédito');
     if (queriesValues.length > 1) {
         pushAction({
             axis: 'Contenu',
@@ -356,7 +386,7 @@ function buildDefaultActionRows(valuesByTab) {
             priority: 1,
             impact: 'fort',
             difficulty: 'technique',
-            source: `${getRows(queriesValues).length} ligne(s) exploitable(s) dans Requêtes Clés / Calédito`
+            source: `${getRows(queriesValues).length} ligne(s) exploitable(s) dans ${contentValues.length > 0 ? 'Contenu' : 'Requêtes Clés / Calédito'}`
         });
     }
 
@@ -421,6 +451,82 @@ async function loadValuesByTab(sheets, sheetUrl, tabNames) {
     return valuesByTab;
 }
 
+function buildMissingSourceRows(sourceTabName) {
+    return [
+        ['Information'],
+        [`Onglet source "${sourceTabName}" vide ou introuvable dans le Google Sheet plan source.`]
+    ];
+}
+
+function buildSourceTabTargets(planValuesByTab, usedTitles) {
+    const targets = [];
+    const summaryTabName = "Synthèse Audit - Plan d'action";
+    const summaryValues = planValuesByTab[summaryTabName];
+
+    if (summaryValues?.length > 0) {
+        targets.push({
+            title: summaryTabName,
+            values: summaryValues,
+            targetTitle: sanitizeSheetTitle(`Source - ${summaryTabName}`, usedTitles),
+            sourceFound: true
+        });
+    }
+
+    for (const config of ACTION_PLAN_OUTPUT_TAB_CONFIGS) {
+        const values = planValuesByTab[config.sourceTabName];
+        const sourceFound = values?.length > 0;
+
+        targets.push({
+            title: config.sourceTabName,
+            values: sourceFound ? values : buildMissingSourceRows(config.sourceTabName),
+            targetTitle: sanitizeSheetTitle(config.targetTitle, usedTitles),
+            airtableField: config.airtableField,
+            sourceFound
+        });
+    }
+
+    return targets;
+}
+
+async function readSheetIdByTitle(sheets, spreadsheetId) {
+    try {
+        const response = await sheets.spreadsheets.get({
+            spreadsheetId,
+            fields: 'sheets.properties(sheetId,title)'
+        });
+
+        return new Map(
+            (response.data.sheets || [])
+                .map((sheet) => sheet.properties)
+                .filter((properties) => properties?.title && typeof properties.sheetId === 'number')
+                .map((properties) => [properties.title, properties.sheetId])
+        );
+    } catch (err) {
+        console.warn(`[ACTION PLAN] Impossible de récupérer les IDs des onglets générés: ${err.message}`);
+        return new Map();
+    }
+}
+
+function buildAirtableSheetLinks(spreadsheetId, sheetIdByTitle, sourceTabTargets) {
+    const links = {};
+
+    for (const tab of sourceTabTargets) {
+        if (!tab.airtableField) {
+            continue;
+        }
+
+        const sheetId = sheetIdByTitle.get(tab.targetTitle);
+        if (typeof sheetId !== 'number') {
+            console.warn(`[ACTION PLAN] Onglet "${tab.targetTitle}" introuvable dans le Google Sheet généré.`);
+            continue;
+        }
+
+        links[tab.airtableField] = buildGoogleSheetRangeUrl(spreadsheetId, sheetId, 'A1');
+    }
+
+    return links;
+}
+
 export async function generateActionPlanSheet(audit) {
     if (!audit) {
         throw new Error("Audit introuvable pour la génération du plan d'actions.");
@@ -481,11 +587,8 @@ export async function generateActionPlanSheet(audit) {
         }
     });
 
-    const sourceTabTargets = Object.entries(planValuesByTab).map(([title, values]) => ({
-        title,
-        values,
-        targetTitle: sanitizeSheetTitle(`Source - ${title}`, usedTitles)
-    }));
+    const sourceTabTargets = buildSourceTabTargets(planValuesByTab, usedTitles);
+    const sourceTabsCopied = sourceTabTargets.filter((tab) => tab.sourceFound).length;
 
     for (const tab of sourceTabTargets) {
         addSheetRequests.push({
@@ -506,25 +609,25 @@ export async function generateActionPlanSheet(audit) {
         });
     }
 
-    const contextRows = buildContextRows(audit, sourceTabTargets.length, generatedActionRows.length);
+    const contextRows = buildContextRows(audit, sourceTabsCopied, generatedActionRows.length);
     const valueData = [
         {
-            range: `${actionsTitle}!A1:H1`,
+            range: buildA1Range(actionsTitle, 'A1:H1'),
             values: ACTION_PLAN_HEADERS
         },
         {
-            range: `${actionsTitle}!A2:H${generatedActionRows.length + 1}`,
+            range: buildA1Range(actionsTitle, `A2:H${generatedActionRows.length + 1}`),
             values: generatedActionRows
         },
         {
-            range: `${contextTitle}!A1:B${contextRows.length}`,
+            range: buildA1Range(contextTitle, `A1:B${contextRows.length}`),
             values: contextRows
         }
     ];
 
     for (const tab of sourceTabTargets) {
         valueData.push({
-            range: `${tab.targetTitle}!A1`,
+            range: buildA1Range(tab.targetTitle, 'A1'),
             values: tab.values
         });
     }
@@ -576,10 +679,14 @@ export async function generateActionPlanSheet(audit) {
         });
     }
 
+    const sheetIdByTitle = await readSheetIdByTitle(sheets, spreadsheetId);
+    const airtableSheetLinks = buildAirtableSheetLinks(spreadsheetId, sheetIdByTitle, sourceTabTargets);
+
     return {
         spreadsheetId,
         spreadsheetUrl,
-        sourceTabsCopied: sourceTabTargets.length,
+        airtableSheetLinks,
+        sourceTabsCopied,
         actionCount: generatedActionRows.length
     };
 }

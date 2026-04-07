@@ -1457,7 +1457,7 @@ app.post('/api/audits/:id/generate-action-plan', authenticateToken, async (req, 
             }
 
             if (!actionPlanResult) throw lastActionPlanErr;
-            const { spreadsheetUrl, sourceTabsCopied, actionCount } = actionPlanResult;
+            const { spreadsheetUrl, airtableSheetLinks = {}, sourceTabsCopied, actionCount } = actionPlanResult;
 
             await db.run(
                 `UPDATE audits
@@ -1474,8 +1474,16 @@ app.post('/api/audits/:id/generate-action-plan', authenticateToken, async (req, 
             io.emit('audit:update', updatedAudit);
 
             if (audit.airtable_record_id) {
-                updateAirtableField(audit.airtable_record_id, "Lien_plan_d'action", spreadsheetUrl)
-                    .catch(err => console.error(`[ACTION PLAN] Airtable sync error:`, err.message));
+                const airtableUpdates = [
+                    updateAirtableField(audit.airtable_record_id, "Lien_plan_d'action", spreadsheetUrl),
+                    ...Object.entries(airtableSheetLinks).map(([fieldName, url]) =>
+                        updateAirtableField(audit.airtable_record_id, fieldName, url)
+                    )
+                ];
+
+                await Promise.all(airtableUpdates).catch(err => {
+                    console.error(`[ACTION PLAN] Airtable sync error:`, err.message);
+                });
             }
 
             return res.json({
