@@ -1,15 +1,17 @@
 import { google } from 'googleapis';
 
-const ACTION_PLAN_HEADERS = [[
-    'Axe',
-    'Action',
-    'Description',
-    'Priorité (1/2/3)',
-    'Impact estimé (faible/moyen/fort)',
-    'Difficulté (facile/technique/développeur)',
-    'Données sources',
-    'Commentaire'
-]];
+// ─── Structure "Synthèse Audit - Plan d'action" (9 colonnes) ───
+const SYNTHESE_HEADERS = [
+    'N°',
+    'Catégorie',
+    'Sous-catégorie',
+    'Sujet',
+    'Conforme ?',
+    'Remarque(s)',
+    'Action suggérée',
+    'Priorité',
+    'Statut'
+];
 
 const PLAN_SOURCE_TAB_NAMES = [
     "Synthèse Audit - Plan d'action",
@@ -46,6 +48,8 @@ const ACTION_PLAN_OUTPUT_TAB_CONFIGS = [
     }
 ];
 
+// ─── Google Auth & Sheets ───
+
 function createGoogleAuth() {
     if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.GOOGLE_REFRESH_TOKEN) {
         throw new Error('Les accès Google Sheets ne sont pas configurés côté backend.');
@@ -77,6 +81,8 @@ function buildGoogleSheetRangeUrl(spreadsheetId, sheetId, range = 'A1') {
 function buildA1Range(sheetTitle, range) {
     return `'${String(sheetTitle).replace(/'/g, "''")}'!${range}`;
 }
+
+// ─── Utilitaires texte & données ───
 
 function normalizeText(value) {
     return String(value ?? '')
@@ -196,28 +202,348 @@ function countMatchingRows(values, predicate) {
     }).length;
 }
 
-function buildActionRow({
-    axis,
-    action,
-    description,
-    priority,
-    impact,
-    difficulty,
-    source
-}) {
-    return [
-        axis,
-        action,
-        description,
-        String(priority),
-        impact,
-        difficulty,
-        source,
-        ''
-    ];
+// ─── Helpers de résultat d'audit ───
+
+function formatPriority(level) {
+    switch (level) {
+        case 'importante': return '🔑🔑🔑 Importante';
+        case 'moyenne': return '🔑🔑 Moyenne';
+        case 'faible': return '🔑 Faible';
+        default: return 'RAS';
+    }
 }
 
-function buildContextRows(audit, sourceTabsCopied, actionCount) {
+function conforme(remark = 'RAS') {
+    return { conformity: 'Oui', remark, action: 'RAS', priority: 'RAS', status: 'RAS' };
+}
+
+function nonConforme(remark, action, priority = 'importante') {
+    return { conformity: 'Non', remark, action, priority: formatPriority(priority), status: 'À traiter' };
+}
+
+function amelioration(remark, action, priority = 'moyenne') {
+    return { conformity: 'Amélioration possible', remark, action, priority: formatPriority(priority), status: 'À traiter' };
+}
+
+function nonConcerne(remark = 'RAS') {
+    return { conformity: 'Non concerné', remark, action: 'RAS', priority: 'RAS', status: 'RAS' };
+}
+
+function nonVerifie(remark = 'Données non disponibles.') {
+    return { conformity: 'Non vérifié', remark, action: 'RAS', priority: 'RAS', status: 'RAS' };
+}
+
+// ─── Définition des points d'audit ───
+
+const AUDIT_CHECKS = [
+    // ══════════ TECHNIQUE — Images ══════════
+    {
+        category: 'Technique',
+        subcategory: 'Images',
+        subject: 'Les images du site sont optimisées en termes de poids (< 100 Ko).',
+        evaluate: (vbt) => {
+            const values = vbt['Images'];
+            if (!values || values.length <= 1) return nonVerifie('Onglet "Images" non disponible.');
+            const headers = getHeaders(values);
+            const sizeIdx = findColIndex(headers, ['taille', 'octet', 'bytes', 'poids']);
+            const total = getRows(values).length;
+            if (sizeIdx < 0) return nonVerifie('Colonne de taille non trouvée dans l\'onglet Images.');
+            const heavy = countMatchingRows(values, (r) => toBytes(r[sizeIdx]) >= 100000);
+            if (heavy === 0) return conforme();
+            if (heavy > Math.ceil(total * 0.3)) {
+                return nonConforme(
+                    `${heavy}/${total} image(s) dépassent 100 Ko.`,
+                    'Compresser ou redimensionner les images trop lourdes pour améliorer le temps de chargement.',
+                    heavy > 10 ? 'importante' : 'moyenne'
+                );
+            }
+            return amelioration(
+                `${heavy} image(s) > 100 Ko sur ${total}.`,
+                'Compresser les images concernées pour réduire le temps de chargement.',
+                'moyenne'
+            );
+        }
+    },
+
+    // ══════════ CONTENU — SEO Texte et structure ══════════
+    {
+        category: 'Contenu',
+        subcategory: 'SEO Texte et structure',
+        subject: 'Les balises <title> sont de longueur adéquate sur chaque page.',
+        evaluate: (vbt) => {
+            const values = vbt['Balise title'];
+            if (!values || values.length <= 1) return nonVerifie('Onglet "Balise title" non disponible.');
+            const headers = getHeaders(values);
+            const statusIdx = findColIndex(headers, ['etat balise title', 'etat', 'état', 'status']);
+            const total = getRows(values).length;
+            if (statusIdx < 0) return nonVerifie('Colonne d\'état non trouvée dans l\'onglet Balise title.');
+            const tooLong = countMatchingRows(values, (r) => normalizeText(r[statusIdx]).includes('trop longue'));
+            const tooShort = countMatchingRows(values, (r) => normalizeText(r[statusIdx]).includes('trop courte'));
+            const issues = tooLong + tooShort;
+            if (issues === 0) return conforme();
+            const details = [];
+            if (tooLong > 0) details.push(`${tooLong} trop longue(s)`);
+            if (tooShort > 0) details.push(`${tooShort} trop courte(s)`);
+            if (issues > Math.ceil(total * 0.5)) {
+                return nonConforme(
+                    `${issues}/${total} balise(s) title non conformes (${details.join(', ')}).`,
+                    'Raccourcir ou compléter les balises title pour améliorer leur lisibilité dans les SERP.',
+                    'importante'
+                );
+            }
+            return amelioration(
+                `${issues} balise(s) title à corriger sur ${total} (${details.join(', ')}).`,
+                'Ajuster les balises title concernées pour respecter la longueur recommandée (50-60 caractères).',
+                issues > 5 ? 'importante' : 'moyenne'
+            );
+        }
+    },
+    {
+        category: 'Contenu',
+        subcategory: 'SEO Texte et structure',
+        subject: 'Chaque page possède une meta description renseignée et de longueur adéquate.',
+        evaluate: (vbt) => {
+            const values = vbt['Meta desc'];
+            if (!values || values.length <= 1) return nonVerifie('Onglet "Meta desc" non disponible.');
+            const headers = getHeaders(values);
+            const countIdx = findColIndex(headers, ['nb de caracteres', 'caractere', 'caracter', 'longueur']);
+            const total = getRows(values).length;
+            if (countIdx < 0) return nonVerifie('Colonne de caractères non trouvée dans l\'onglet Meta desc.');
+            const missing = countMatchingRows(values, (r) => parseNumber(r[countIdx]) === 0);
+            if (missing === 0) return conforme();
+            if (missing > Math.ceil(total * 0.5)) {
+                return nonConforme(
+                    `${missing}/${total} page(s) sans meta description.`,
+                    'Rédiger des meta descriptions uniques et attractives (150-160 caractères) sur les pages concernées.',
+                    'importante'
+                );
+            }
+            return amelioration(
+                `${missing} page(s) sans meta description sur ${total}.`,
+                'Rédiger des meta descriptions pertinentes sur les pages concernées.',
+                'moyenne'
+            );
+        }
+    },
+    {
+        category: 'Contenu',
+        subcategory: 'SEO Texte et structure',
+        subject: 'Les balises H1 sont uniques sur chaque page (pas de doublons).',
+        evaluate: (vbt) => {
+            const values = vbt['Doublons H1'];
+            if (!values || values.length <= 1) return conforme('Aucun doublon H1 détecté.');
+            const count = getRows(values).length;
+            if (count === 0) return conforme();
+            return nonConforme(
+                `${count} doublon(s) H1 détecté(s).`,
+                'Attribuer un H1 unique et pertinent sur chaque page pour clarifier le sujet principal.',
+                count > 5 ? 'importante' : 'moyenne'
+            );
+        }
+    },
+    {
+        category: 'Contenu',
+        subcategory: 'SEO Texte et structure',
+        subject: 'Chaque page comporte une balise H1.',
+        evaluate: (vbt) => {
+            const values = vbt['Balises H1-H6'];
+            if (!values || values.length <= 1) return nonVerifie('Onglet "Balises H1-H6" non disponible.');
+            const headers = getHeaders(values);
+            const h1Idx = findColIndex(headers, ['h1 absente']);
+            if (h1Idx < 0) return nonVerifie('Colonne "H1 absente" non trouvée.');
+            const missing = countMatchingRows(values, (r) => normalizeText(r[h1Idx]) === 'oui');
+            if (missing === 0) return conforme();
+            return nonConforme(
+                `${missing} page(s) sans balise H1.`,
+                'Ajouter une balise H1 pertinente contenant le mot-clé principal sur chaque page concernée.',
+                'importante'
+            );
+        }
+    },
+    {
+        category: 'Contenu',
+        subcategory: 'SEO Texte et structure',
+        subject: 'La première balise Hn de chaque page est un H1.',
+        evaluate: (vbt) => {
+            const values = vbt['Balises H1-H6'];
+            if (!values || values.length <= 1) return nonVerifie('Onglet "Balises H1-H6" non disponible.');
+            const headers = getHeaders(values);
+            const idx = findColIndex(headers, ['1ere balise hn', '1ère balise hn', 'pas h1', "n'est pas h1"]);
+            if (idx < 0) return nonVerifie('Colonne "1ère balise Hn" non trouvée.');
+            const count = countMatchingRows(values, (r) => normalizeText(r[idx]) === 'oui');
+            if (count === 0) return conforme();
+            return amelioration(
+                `${count} page(s) où la première balise Hn n'est pas un H1.`,
+                'Réorganiser la hiérarchie des titres pour que le H1 soit la première balise de chaque page.',
+                'moyenne'
+            );
+        }
+    },
+    {
+        category: 'Contenu',
+        subcategory: 'SEO Texte et structure',
+        subject: 'Il n\'y a pas de sauts de niveaux dans la hiérarchie des balises Hn.',
+        evaluate: (vbt) => {
+            const values = vbt['Balises H1-H6'];
+            if (!values || values.length <= 1) return nonVerifie('Onglet "Balises H1-H6" non disponible.');
+            const headers = getHeaders(values);
+            const idx = findColIndex(headers, ['sauts de niveau', 'saut']);
+            if (idx < 0) return nonVerifie('Colonne "Sauts de niveau" non trouvée.');
+            const count = countMatchingRows(values, (r) => parseNumber(r[idx]) > 0);
+            if (count === 0) return conforme();
+            return amelioration(
+                `${count} page(s) avec des sauts de niveaux dans la hiérarchie Hn.`,
+                'Corriger la hiérarchie des titres pour respecter l\'ordre H1 > H2 > H3, etc.',
+                'faible'
+            );
+        }
+    },
+    {
+        category: 'Contenu',
+        subcategory: 'SEO Texte et structure',
+        subject: 'Les balises Hn ne sont pas trop longues.',
+        evaluate: (vbt) => {
+            const values = vbt['Balises H1-H6'];
+            if (!values || values.length <= 1) return nonVerifie('Onglet "Balises H1-H6" non disponible.');
+            const headers = getHeaders(values);
+            const idx = findColIndex(headers, ['hn trop longue', 'trop longue']);
+            if (idx < 0) return nonVerifie('Colonne "Hn trop longue" non trouvée.');
+            const count = countMatchingRows(values, (r) => parseNumber(r[idx]) >= 1);
+            if (count === 0) return conforme();
+            return amelioration(
+                `${count} page(s) avec des balises Hn trop longues.`,
+                'Raccourcir les titres Hn pour plus de clarté et d\'impact SEO.',
+                'faible'
+            );
+        }
+    },
+    {
+        category: 'Contenu',
+        subcategory: 'SEO Texte et structure',
+        subject: 'Le contenu des pages est suffisant (min. 350 mots).',
+        evaluate: (vbt) => {
+            const values = vbt['Nb mots body'];
+            if (!values || values.length <= 1) return nonVerifie('Onglet "Nb mots body" non disponible.');
+            const total = getRows(values).length;
+            if (total === 0) return conforme();
+            if (total > 5) {
+                return nonConforme(
+                    `${total} page(s) avec moins de 350 mots.`,
+                    'Enrichir le contenu des pages concernées avec du texte pertinent intégrant le champ sémantique du sujet.',
+                    'importante'
+                );
+            }
+            return amelioration(
+                `${total} page(s) avec un contenu insuffisant.`,
+                'Ajouter du contenu pertinent comportant le champ sémantique et des termes de géolocalisation si applicable.',
+                'moyenne'
+            );
+        }
+    },
+    {
+        category: 'Contenu',
+        subcategory: 'SEO Texte et structure',
+        subject: 'Les pages sont alignées sur les requêtes stratégiques.',
+        evaluate: (vbt) => {
+            const contentValues = vbt['Contenu'];
+            const queriesValues = contentValues && contentValues.length > 1
+                ? contentValues
+                : vbt['Requêtes Clés / Calédito'];
+            if (!queriesValues || queriesValues.length <= 1) {
+                return nonVerifie('Onglet "Contenu" ou "Requêtes Clés" non disponible.');
+            }
+            const count = getRows(queriesValues).length;
+            const source = contentValues && contentValues.length > 1 ? 'Contenu' : 'Requêtes Clés / Calédito';
+            if (count > 0) {
+                return amelioration(
+                    `${count} requête(s) stratégique(s) identifiée(s) dans l'onglet ${source}.`,
+                    'Aligner les contenus et pages cibles sur les requêtes les plus stratégiques pour capter une demande qualifiée.',
+                    'importante'
+                );
+            }
+            return nonVerifie('Aucune requête stratégique identifiée.');
+        }
+    },
+
+    // ══════════ CONTENU — SEO Images ══════════
+    {
+        category: 'Contenu',
+        subcategory: 'SEO Images',
+        subject: 'Les signaux SEO des images sont optimisés (alt, nommage, poids).',
+        evaluate: (vbt) => {
+            const values = vbt['Données Images'];
+            if (!values || values.length <= 1) return nonVerifie('Onglet "Données Images" non disponible.');
+            const count = getRows(values).length;
+            if (count === 0) return conforme();
+            return amelioration(
+                `${count} image(s) à analyser pour les signaux SEO.`,
+                'Uniformiser les images prioritaires : optimiser le poids, le nommage des fichiers et les attributs alt.',
+                'moyenne'
+            );
+        }
+    },
+
+    // ══════════ CONTENU — Longueur de page ══════════
+    {
+        category: 'Contenu',
+        subcategory: 'SEO Texte et structure',
+        subject: 'La longueur des pages stratégiques est équilibrée.',
+        evaluate: (vbt) => {
+            const values = vbt['Longueur de page'];
+            if (!values || values.length <= 1) return nonVerifie('Onglet "Longueur de page" non disponible.');
+            const count = getRows(values).length;
+            if (count === 0) return conforme();
+            return amelioration(
+                `${count} page(s) avec un déséquilibre de longueur détecté.`,
+                'Harmoniser la profondeur éditoriale des pages clés pour éviter les contenus trop courts ou peu compétitifs.',
+                'moyenne'
+            );
+        }
+    }
+];
+
+// ─── Construction des lignes Synthèse ───
+
+function buildSyntheseRows(valuesByTab) {
+    const rows = [];
+
+    for (let i = 0; i < AUDIT_CHECKS.length; i += 1) {
+        const check = AUDIT_CHECKS[i];
+        const result = check.evaluate(valuesByTab);
+
+        rows.push([
+            String(i + 1),
+            check.category,
+            check.subcategory,
+            check.subject,
+            result.conformity,
+            result.remark,
+            result.action,
+            result.priority,
+            result.status
+        ]);
+    }
+
+    if (rows.length === 0) {
+        rows.push([
+            '1',
+            'Technique',
+            'Général',
+            'Consolidation manuelle des priorités SEO',
+            'Non vérifié',
+            'Aucune règle automatique n\'a pu produire de résultat exploitable.',
+            'Utiliser le Google Slides validé et les onglets source importés pour compléter ce plan manuellement.',
+            '🔑🔑🔑 Importante',
+            'À traiter'
+        ]);
+    }
+
+    return rows;
+}
+
+// ─── Contexte audit ───
+
+function buildContextRows(audit, sourceTabsCopied, checkCount) {
     return [
         ['Champ', 'Valeur'],
         ['Nom du client', audit.nom_site || 'Non renseigné'],
@@ -226,212 +552,14 @@ function buildContextRows(audit, sourceTabsCopied, actionCount) {
         ['Google Sheet audit source', audit.sheet_audit_url || 'Non renseigné'],
         ['Google Sheet plan source', audit.sheet_plan_url || 'Non renseigné'],
         ['Date de génération', new Date().toLocaleString('fr-FR')],
-        ['Actions générées', String(actionCount)],
+        ['Points d\'audit évalués', String(checkCount)],
         ['Onglets source importés', String(sourceTabsCopied)],
-        ['Mode', 'V1 par règles par défaut issue du cahier des charges'],
-        ['Note', 'Cette version utilise des règles métier par défaut en attendant la base structurée des 25 actions types.']
+        ['Mode', 'Synthèse Audit - Plan d\'action (auto-généré)'],
+        ['Note', 'Cette synthèse est générée automatiquement à partir des données d\'audit. Les points peuvent être complétés manuellement.']
     ];
 }
 
-function extractRuleInput(valuesByTab, tabName) {
-    return valuesByTab[tabName] || [];
-}
-
-function buildDefaultActionRows(valuesByTab) {
-    const rows = [];
-    const seenActions = new Set();
-
-    const pushAction = (config) => {
-        if (!config || seenActions.has(config.action)) {
-            return;
-        }
-
-        seenActions.add(config.action);
-        rows.push(buildActionRow(config));
-    };
-
-    const imagesValues = extractRuleInput(valuesByTab, 'Images');
-    if (imagesValues.length > 0) {
-        const headers = getHeaders(imagesValues);
-        const sizeIdx = findColIndex(headers, ['taille', 'octet', 'bytes']);
-        const heavyImagesCount = sizeIdx >= 0
-            ? countMatchingRows(imagesValues, (row) => toBytes(row[sizeIdx]) >= 100000)
-            : getRows(imagesValues).length;
-
-        if (heavyImagesCount > 0) {
-            pushAction({
-                axis: 'Technique',
-                action: 'Optimiser le poids des images',
-                description: 'Compresser ou redimensionner les images trop lourdes pour améliorer le temps de chargement des pages les plus exposées.',
-                priority: 2,
-                impact: 'moyen',
-                difficulty: 'technique',
-                source: `${heavyImagesCount} image(s) détectée(s) dans l’onglet Images`
-            });
-        }
-    }
-
-    const titleValues = extractRuleInput(valuesByTab, 'Balise title');
-    if (titleValues.length > 0) {
-        const headers = getHeaders(titleValues);
-        const statusIdx = findColIndex(headers, ['etat balise title', 'etat', 'état', 'status']);
-        const count = statusIdx >= 0
-            ? countMatchingRows(titleValues, (row) => normalizeText(row[statusIdx]).includes('trop longue'))
-            : getRows(titleValues).length;
-
-        if (count > 0) {
-            pushAction({
-                axis: 'Contenu',
-                action: 'Corriger les balises title trop longues',
-                description: 'Raccourcir et clarifier les balises title pour améliorer leur lisibilité et leur efficacité dans les résultats de recherche.',
-                priority: 1,
-                impact: 'fort',
-                difficulty: 'facile',
-                source: `${count} page(s) concernée(s) dans l’onglet Balise title`
-            });
-        }
-    }
-
-    const metaValues = extractRuleInput(valuesByTab, 'Meta desc');
-    if (metaValues.length > 0) {
-        const headers = getHeaders(metaValues);
-        const countIdx = findColIndex(headers, ['nb de caracteres', 'caractere', 'caracter']);
-        const count = countIdx >= 0
-            ? countMatchingRows(metaValues, (row) => parseNumber(row[countIdx]) === 0)
-            : getRows(metaValues).length;
-
-        if (count > 0) {
-            pushAction({
-                axis: 'Contenu',
-                action: 'Renseigner les meta descriptions manquantes',
-                description: 'Rédiger des meta descriptions utiles sur les pages sans extrait pour mieux valoriser les contenus dans les SERP.',
-                priority: 2,
-                impact: 'moyen',
-                difficulty: 'facile',
-                source: `${count} page(s) sans meta description exploitable`
-            });
-        }
-    }
-
-    const duplicateH1Values = extractRuleInput(valuesByTab, 'Doublons H1');
-    if (duplicateH1Values.length > 0) {
-        const count = getRows(duplicateH1Values).length;
-        if (count > 0) {
-            pushAction({
-                axis: 'Contenu',
-                action: 'Supprimer les doublons H1',
-                description: 'Attribuer un H1 unique et cohérent sur chaque page afin de clarifier le sujet principal du contenu.',
-                priority: 1,
-                impact: 'fort',
-                difficulty: 'facile',
-                source: `${count} ligne(s) relevée(s) dans l’onglet Doublons H1`
-            });
-        }
-    }
-
-    const headingsValues = extractRuleInput(valuesByTab, 'Balises H1-H6');
-    if (headingsValues.length > 0) {
-        const headers = getHeaders(headingsValues);
-        const h1AbsenteIdx = findColIndex(headers, ['h1 absente']);
-        const hnNotH1Idx = findColIndex(headers, ['1ere balise hn', '1ère balise hn', 'pas h1', "n'est pas h1"]);
-        const skippedLevelsIdx = findColIndex(headers, ['sauts de niveau']);
-        const longHeadingsIdx = findColIndex(headers, ['hn trop longue']);
-
-        const issuesCount = countMatchingRows(headingsValues, (row) => {
-            const missingH1 = h1AbsenteIdx >= 0 && normalizeText(row[h1AbsenteIdx]) === 'oui';
-            const wrongFirstHeading = hnNotH1Idx >= 0 && normalizeText(row[hnNotH1Idx]) === 'oui';
-            const skippedLevels = skippedLevelsIdx >= 0 && parseNumber(row[skippedLevelsIdx]) > 0;
-            const longHeadings = longHeadingsIdx >= 0 && parseNumber(row[longHeadingsIdx]) >= 1;
-            return missingH1 || wrongFirstHeading || skippedLevels || longHeadings;
-        });
-
-        if (issuesCount > 0) {
-            pushAction({
-                axis: 'Contenu',
-                action: 'Reprendre la hiérarchie des titres Hn',
-                description: 'Réorganiser les titres H1 à H6 pour renforcer la compréhension des pages par les utilisateurs et les moteurs.',
-                priority: 1,
-                impact: 'fort',
-                difficulty: 'facile',
-                source: `${issuesCount} page(s) avec structure de titres à corriger`
-            });
-        }
-    }
-
-    const bodyValues = extractRuleInput(valuesByTab, 'Nb mots body');
-    if (bodyValues.length > 0) {
-        const count = getRows(bodyValues).length;
-        if (count > 0) {
-            pushAction({
-                axis: 'Contenu',
-                action: 'Enrichir les pages au contenu trop faible',
-                description: 'Prioriser les pages les plus pauvres en contenu ou les plus critiques pour renforcer leur valeur SEO et commerciale.',
-                priority: 2,
-                impact: 'fort',
-                difficulty: 'facile',
-                source: `${count} ligne(s) relevée(s) dans l’onglet Nb mots body`
-            });
-        }
-    }
-
-    const contentValues = extractRuleInput(valuesByTab, 'Contenu');
-    const queriesValues = contentValues.length > 0
-        ? contentValues
-        : extractRuleInput(valuesByTab, 'Requêtes Clés / Calédito');
-    if (queriesValues.length > 1) {
-        pushAction({
-            axis: 'Contenu',
-            action: 'Prioriser les pages liées aux requêtes clés',
-            description: 'Aligner les contenus et les pages cibles sur les requêtes jugées les plus stratégiques pour capter une demande qualifiée.',
-            priority: 1,
-            impact: 'fort',
-            difficulty: 'technique',
-            source: `${getRows(queriesValues).length} ligne(s) exploitable(s) dans ${contentValues.length > 0 ? 'Contenu' : 'Requêtes Clés / Calédito'}`
-        });
-    }
-
-    const imageDataValues = extractRuleInput(valuesByTab, 'Données Images');
-    if (imageDataValues.length > 1) {
-        pushAction({
-            axis: 'Technique',
-            action: 'Fiabiliser les signaux SEO des images',
-            description: 'Uniformiser les images prioritaires en travaillant leur poids, leur nommage et leurs attributs utiles au référencement.',
-            priority: 2,
-            impact: 'moyen',
-            difficulty: 'technique',
-            source: `${getRows(imageDataValues).length} ligne(s) exploitable(s) dans Données Images`
-        });
-    }
-
-    const pageLengthValues = extractRuleInput(valuesByTab, 'Longueur de page');
-    if (pageLengthValues.length > 1) {
-        pushAction({
-            axis: 'Contenu',
-            action: 'Rééquilibrer la longueur des pages stratégiques',
-            description: 'Harmoniser la profondeur éditoriale des pages clés pour éviter les contenus trop courts ou peu compétitifs.',
-            priority: 2,
-            impact: 'moyen',
-            difficulty: 'facile',
-            source: `${getRows(pageLengthValues).length} ligne(s) exploitable(s) dans Longueur de page`
-        });
-    }
-
-    rows.sort((a, b) => Number(a[3]) - Number(b[3]));
-
-    if (rows.length === 0) {
-        rows.push(buildActionRow({
-            axis: 'Technique',
-            action: 'Consolider manuellement les priorités SEO',
-            description: 'Aucune règle par défaut n’a pu proposer d’action exploitable. Utiliser le Google Slides validé et les onglets source importés pour compléter ce plan.',
-            priority: 1,
-            impact: 'moyen',
-            difficulty: 'facile',
-            source: 'Aucune correspondance détectée automatiquement'
-        }));
-    }
-
-    return rows;
-}
+// ─── Chargement des données ───
 
 async function loadValuesByTab(sheets, sheetUrl, tabNames) {
     const spreadsheetId = extractSpreadsheetId(sheetUrl);
@@ -527,6 +655,286 @@ function buildAirtableSheetLinks(spreadsheetId, sheetIdByTitle, sourceTabTargets
     return links;
 }
 
+// ─── Formatage : couleurs et styles ───
+
+const COLORS = {
+    headerBg: { red: 0.12, green: 0.25, blue: 0.61 },
+    white: { red: 1, green: 1, blue: 1 },
+    green: { red: 0.35, green: 0.67, blue: 0.35 },
+    orange: { red: 0.91, green: 0.6, blue: 0.2 },
+    red: { red: 0.80, green: 0.20, blue: 0.20 },
+    gray: { red: 0.75, green: 0.75, blue: 0.75 },
+    darkRed: { red: 0.55, green: 0.10, blue: 0.10 },
+    lightGreen: { red: 0.42, green: 0.65, blue: 0.31 }
+};
+
+function buildFormattingRequests(sheetId, dataRowCount) {
+    const lastRow = dataRowCount + 2; // +2 pour bandeau + header
+    const colCount = SYNTHESE_HEADERS.length; // 9
+
+    return [
+        // ── Bandeau titre (ligne 1) : fusion + style ──
+        {
+            mergeCells: {
+                range: {
+                    sheetId,
+                    startRowIndex: 0,
+                    endRowIndex: 1,
+                    startColumnIndex: 0,
+                    endColumnIndex: colCount
+                },
+                mergeType: 'MERGE_ALL'
+            }
+        },
+        {
+            repeatCell: {
+                range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
+                cell: {
+                    userEnteredFormat: {
+                        backgroundColor: COLORS.headerBg,
+                        textFormat: {
+                            bold: true,
+                            fontSize: 14,
+                            foregroundColor: COLORS.white
+                        },
+                        horizontalAlignment: 'CENTER',
+                        verticalAlignment: 'MIDDLE'
+                    }
+                },
+                fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)'
+            }
+        },
+
+        // ── Header (ligne 2) : fond bleu, texte blanc, bold ──
+        {
+            repeatCell: {
+                range: { sheetId, startRowIndex: 1, endRowIndex: 2 },
+                cell: {
+                    userEnteredFormat: {
+                        backgroundColor: COLORS.headerBg,
+                        textFormat: {
+                            bold: true,
+                            foregroundColor: COLORS.white
+                        },
+                        horizontalAlignment: 'CENTER',
+                        verticalAlignment: 'MIDDLE',
+                        wrapStrategy: 'WRAP'
+                    }
+                },
+                fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)'
+            }
+        },
+
+        // ── Freeze 2 premières lignes ──
+        {
+            updateSheetProperties: {
+                properties: {
+                    sheetId,
+                    gridProperties: { frozenRowCount: 2 }
+                },
+                fields: 'gridProperties.frozenRowCount'
+            }
+        },
+
+        // ── Filtres sur la ligne header ──
+        {
+            setBasicFilter: {
+                filter: {
+                    range: {
+                        sheetId,
+                        startRowIndex: 1,
+                        endRowIndex: lastRow,
+                        startColumnIndex: 0,
+                        endColumnIndex: colCount
+                    }
+                }
+            }
+        },
+
+        // ── Couleurs conditionnelles sur "Conforme ?" (colonne E = index 4) ──
+        // Ordre : plus spécifique d'abord
+        {
+            addConditionalFormatRule: {
+                rule: {
+                    ranges: [{ sheetId, startRowIndex: 2, endRowIndex: lastRow, startColumnIndex: 4, endColumnIndex: 5 }],
+                    booleanRule: {
+                        condition: { type: 'TEXT_CONTAINS', values: [{ userEnteredValue: 'Non concerné' }] },
+                        format: { backgroundColor: COLORS.gray }
+                    }
+                },
+                index: 0
+            }
+        },
+        {
+            addConditionalFormatRule: {
+                rule: {
+                    ranges: [{ sheetId, startRowIndex: 2, endRowIndex: lastRow, startColumnIndex: 4, endColumnIndex: 5 }],
+                    booleanRule: {
+                        condition: { type: 'TEXT_CONTAINS', values: [{ userEnteredValue: 'Non vérifié' }] },
+                        format: { backgroundColor: COLORS.gray }
+                    }
+                },
+                index: 1
+            }
+        },
+        {
+            addConditionalFormatRule: {
+                rule: {
+                    ranges: [{ sheetId, startRowIndex: 2, endRowIndex: lastRow, startColumnIndex: 4, endColumnIndex: 5 }],
+                    booleanRule: {
+                        condition: { type: 'TEXT_CONTAINS', values: [{ userEnteredValue: 'Amélioration' }] },
+                        format: {
+                            backgroundColor: COLORS.orange,
+                            textFormat: { foregroundColor: COLORS.white }
+                        }
+                    }
+                },
+                index: 2
+            }
+        },
+        {
+            addConditionalFormatRule: {
+                rule: {
+                    ranges: [{ sheetId, startRowIndex: 2, endRowIndex: lastRow, startColumnIndex: 4, endColumnIndex: 5 }],
+                    booleanRule: {
+                        condition: { type: 'TEXT_EQ', values: [{ userEnteredValue: 'Non' }] },
+                        format: {
+                            backgroundColor: COLORS.red,
+                            textFormat: { foregroundColor: COLORS.white }
+                        }
+                    }
+                },
+                index: 3
+            }
+        },
+        {
+            addConditionalFormatRule: {
+                rule: {
+                    ranges: [{ sheetId, startRowIndex: 2, endRowIndex: lastRow, startColumnIndex: 4, endColumnIndex: 5 }],
+                    booleanRule: {
+                        condition: { type: 'TEXT_EQ', values: [{ userEnteredValue: 'Oui' }] },
+                        format: {
+                            backgroundColor: COLORS.green,
+                            textFormat: { foregroundColor: COLORS.white }
+                        }
+                    }
+                },
+                index: 4
+            }
+        },
+
+        // ── Couleurs conditionnelles sur "Priorité" (colonne H = index 7) ──
+        {
+            addConditionalFormatRule: {
+                rule: {
+                    ranges: [{ sheetId, startRowIndex: 2, endRowIndex: lastRow, startColumnIndex: 7, endColumnIndex: 8 }],
+                    booleanRule: {
+                        condition: { type: 'TEXT_CONTAINS', values: [{ userEnteredValue: 'Importante' }] },
+                        format: {
+                            backgroundColor: COLORS.darkRed,
+                            textFormat: { foregroundColor: COLORS.white }
+                        }
+                    }
+                },
+                index: 5
+            }
+        },
+        {
+            addConditionalFormatRule: {
+                rule: {
+                    ranges: [{ sheetId, startRowIndex: 2, endRowIndex: lastRow, startColumnIndex: 7, endColumnIndex: 8 }],
+                    booleanRule: {
+                        condition: { type: 'TEXT_CONTAINS', values: [{ userEnteredValue: 'Moyenne' }] },
+                        format: {
+                            backgroundColor: COLORS.orange,
+                            textFormat: { foregroundColor: COLORS.white }
+                        }
+                    }
+                },
+                index: 6
+            }
+        },
+        {
+            addConditionalFormatRule: {
+                rule: {
+                    ranges: [{ sheetId, startRowIndex: 2, endRowIndex: lastRow, startColumnIndex: 7, endColumnIndex: 8 }],
+                    booleanRule: {
+                        condition: { type: 'TEXT_CONTAINS', values: [{ userEnteredValue: 'Faible' }] },
+                        format: {
+                            backgroundColor: COLORS.lightGreen,
+                            textFormat: { foregroundColor: COLORS.white }
+                        }
+                    }
+                },
+                index: 7
+            }
+        },
+
+        // ── Couleur conditionnelle sur "Statut" (colonne I = index 8) ──
+        {
+            addConditionalFormatRule: {
+                rule: {
+                    ranges: [{ sheetId, startRowIndex: 2, endRowIndex: lastRow, startColumnIndex: 8, endColumnIndex: 9 }],
+                    booleanRule: {
+                        condition: { type: 'TEXT_EQ', values: [{ userEnteredValue: 'À traiter' }] },
+                        format: {
+                            backgroundColor: COLORS.orange,
+                            textFormat: { foregroundColor: COLORS.white }
+                        }
+                    }
+                },
+                index: 8
+            }
+        },
+
+        // ── Auto-resize des colonnes ──
+        {
+            autoResizeDimensions: {
+                dimensions: {
+                    sheetId,
+                    dimension: 'COLUMNS',
+                    startIndex: 0,
+                    endIndex: colCount
+                }
+            }
+        },
+
+        // ── Largeur minimale pour les colonnes textuelles (Sujet, Remarques, Action) ──
+        {
+            updateDimensionProperties: {
+                range: { sheetId, dimension: 'COLUMNS', startIndex: 3, endIndex: 4 },
+                properties: { pixelSize: 300 },
+                fields: 'pixelSize'
+            }
+        },
+        {
+            updateDimensionProperties: {
+                range: { sheetId, dimension: 'COLUMNS', startIndex: 5, endIndex: 6 },
+                properties: { pixelSize: 280 },
+                fields: 'pixelSize'
+            }
+        },
+        {
+            updateDimensionProperties: {
+                range: { sheetId, dimension: 'COLUMNS', startIndex: 6, endIndex: 7 },
+                properties: { pixelSize: 300 },
+                fields: 'pixelSize'
+            }
+        },
+
+        // ── Hauteur de la ligne bandeau ──
+        {
+            updateDimensionProperties: {
+                range: { sheetId, dimension: 'ROWS', startIndex: 0, endIndex: 1 },
+                properties: { pixelSize: 50 },
+                fields: 'pixelSize'
+            }
+        }
+    ];
+}
+
+// ─── Fonction principale ───
+
 export async function generateActionPlanSheet(audit) {
     if (!audit) {
         throw new Error("Audit introuvable pour la génération du plan d'actions.");
@@ -534,6 +942,8 @@ export async function generateActionPlanSheet(audit) {
 
     const auth = createGoogleAuth();
     const sheets = createSheetsClient(auth);
+
+    // 1. Créer le Google Sheet
     const createResponse = await sheets.spreadsheets.create({
         requestBody: {
             properties: {
@@ -552,50 +962,50 @@ export async function generateActionPlanSheet(audit) {
         throw new Error("La création du Google Sheet plan d'actions a échoué.");
     }
 
+    // 2. Charger les données source
     const planValuesByTab = await loadValuesByTab(sheets, audit.sheet_plan_url, PLAN_SOURCE_TAB_NAMES);
     const auditValuesByTab = await loadValuesByTab(sheets, audit.sheet_audit_url, AUDIT_RULE_TABS);
-    const generatedActionRows = buildDefaultActionRows({
+
+    // 3. Générer les lignes Synthèse Audit
+    const syntheseRows = buildSyntheseRows({
         ...planValuesByTab,
         ...auditValuesByTab
     });
 
+    // 4. Préparer les onglets
     const usedTitles = new Set();
-    const actionsTitle = sanitizeSheetTitle('Actions proposées', usedTitles);
+    const syntheseTitle = sanitizeSheetTitle("Synthèse Audit - Plan d'action", usedTitles);
     const contextTitle = sanitizeSheetTitle('Contexte audit', usedTitles);
     const addSheetRequests = [];
 
+    // Renommer l'onglet par défaut → Synthèse Audit - Plan d'action
     if (typeof defaultSheetId === 'number') {
         addSheetRequests.push({
             updateSheetProperties: {
                 properties: {
                     sheetId: defaultSheetId,
-                    title: actionsTitle,
-                    gridProperties: {
-                        frozenRowCount: 1
-                    }
+                    title: syntheseTitle
                 },
-                fields: 'title,gridProperties.frozenRowCount'
+                fields: 'title'
             }
         });
     }
 
+    // Onglet Contexte
     addSheetRequests.push({
         addSheet: {
-            properties: {
-                title: contextTitle
-            }
+            properties: { title: contextTitle }
         }
     });
 
+    // Onglets source
     const sourceTabTargets = buildSourceTabTargets(planValuesByTab, usedTitles);
     const sourceTabsCopied = sourceTabTargets.filter((tab) => tab.sourceFound).length;
 
     for (const tab of sourceTabTargets) {
         addSheetRequests.push({
             addSheet: {
-                properties: {
-                    title: tab.targetTitle
-                }
+                properties: { title: tab.targetTitle }
             }
         });
     }
@@ -603,28 +1013,44 @@ export async function generateActionPlanSheet(audit) {
     if (addSheetRequests.length > 0) {
         await sheets.spreadsheets.batchUpdate({
             spreadsheetId,
-            requestBody: {
-                requests: addSheetRequests
-            }
+            requestBody: { requests: addSheetRequests }
         });
     }
 
-    const contextRows = buildContextRows(audit, sourceTabsCopied, generatedActionRows.length);
+    // 5. Écrire les données
+    const bannerDate = new Date().toLocaleDateString('fr-FR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+    }).replace(/\//g, '.');
+
+    const bannerText = `AUDIT SEO - Synthèse ${bannerDate} - ${(audit.nom_site || 'Client').toUpperCase()}`;
+
+    const contextRows = buildContextRows(audit, sourceTabsCopied, syntheseRows.length);
     const valueData = [
+        // Bandeau titre (ligne 1)
         {
-            range: buildA1Range(actionsTitle, 'A1:H1'),
-            values: ACTION_PLAN_HEADERS
+            range: buildA1Range(syntheseTitle, 'A1'),
+            values: [[bannerText]]
         },
+        // Headers (ligne 2)
         {
-            range: buildA1Range(actionsTitle, `A2:H${generatedActionRows.length + 1}`),
-            values: generatedActionRows
+            range: buildA1Range(syntheseTitle, `A2:I2`),
+            values: [SYNTHESE_HEADERS]
         },
+        // Données (ligne 3+)
+        {
+            range: buildA1Range(syntheseTitle, `A3:I${syntheseRows.length + 2}`),
+            values: syntheseRows
+        },
+        // Contexte
         {
             range: buildA1Range(contextTitle, `A1:B${contextRows.length}`),
             values: contextRows
         }
     ];
 
+    // Onglets source
     for (const tab of sourceTabTargets) {
         valueData.push({
             range: buildA1Range(tab.targetTitle, 'A1'),
@@ -640,45 +1066,17 @@ export async function generateActionPlanSheet(audit) {
         }
     });
 
+    // 6. Appliquer le formatage
     if (typeof defaultSheetId === 'number') {
+        const formattingRequests = buildFormattingRequests(defaultSheetId, syntheseRows.length);
+
         await sheets.spreadsheets.batchUpdate({
             spreadsheetId,
-            requestBody: {
-                requests: [
-                    {
-                        repeatCell: {
-                            range: {
-                                sheetId: defaultSheetId,
-                                startRowIndex: 0,
-                                endRowIndex: 1
-                            },
-                            cell: {
-                                userEnteredFormat: {
-                                    backgroundColor: { red: 0.12, green: 0.25, blue: 0.61 },
-                                    textFormat: {
-                                        bold: true,
-                                        foregroundColor: { red: 1, green: 1, blue: 1 }
-                                    }
-                                }
-                            },
-                            fields: 'userEnteredFormat(backgroundColor,textFormat)'
-                        }
-                    },
-                    {
-                        autoResizeDimensions: {
-                            dimensions: {
-                                sheetId: defaultSheetId,
-                                dimension: 'COLUMNS',
-                                startIndex: 0,
-                                endIndex: 8
-                            }
-                        }
-                    }
-                ]
-            }
+            requestBody: { requests: formattingRequests }
         });
     }
 
+    // 7. Construire les liens Airtable
     const sheetIdByTitle = await readSheetIdByTitle(sheets, spreadsheetId);
     const airtableSheetLinks = buildAirtableSheetLinks(spreadsheetId, sheetIdByTitle, sourceTabTargets);
 
@@ -687,6 +1085,6 @@ export async function generateActionPlanSheet(audit) {
         spreadsheetUrl,
         airtableSheetLinks,
         sourceTabsCopied,
-        actionCount: generatedActionRows.length
+        actionCount: syntheseRows.length
     };
 }
