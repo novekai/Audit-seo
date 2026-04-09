@@ -693,7 +693,7 @@ export const initWorker = (io, db) => {
                     await updateStep('gsc_problemes_indexation', problemIndexationStep.status, problemIndexationStep.details, problemIndexationStep.outputUrl);
                     if (audit.airtable_record_id) {
                         if (gscCovRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_urls', gscCovRes.capture);
-                        if (hasAirtableValue(gscCovRes.pagesIndexed)) await updateAirtableField(audit.airtable_record_id, 'nombres de pages indexé trafic actuel', gscCovRes.pagesIndexed);
+                        if (hasNumericValue(gscCovRes.pagesIndexed)) await updateAirtableField(audit.airtable_record_id, 'nombres de pages indexé trafic actuel', Number(String(gscCovRes.pagesIndexed).replace(/[\s\u00A0.,]/g, '')));
                         if (gscCovRes.indexationCapture) await updateAirtableField(audit.airtable_record_id, 'Img_indexation_gsc', gscCovRes.indexationCapture);
                         if (gscCovRes.problemCapture) await updateAirtableField(audit.airtable_record_id, 'Img_probleme_indexation_gsc', gscCovRes.problemCapture);
                     }
@@ -773,7 +773,7 @@ export const initWorker = (io, db) => {
                     await updateStep('gsc_problemes_indexation', problemIndexationStep.status, problemIndexationStep.details, problemIndexationStep.outputUrl);
                     if (audit.airtable_record_id) {
                         if (gscCovRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_urls', gscCovRes.capture);
-                        if (hasAirtableValue(gscCovRes.pagesIndexed)) await updateAirtableField(audit.airtable_record_id, 'nombres de pages indexé trafic actuel', gscCovRes.pagesIndexed);
+                        if (hasNumericValue(gscCovRes.pagesIndexed)) await updateAirtableField(audit.airtable_record_id, 'nombres de pages indexé trafic actuel', Number(String(gscCovRes.pagesIndexed).replace(/[\s\u00A0.,]/g, '')));
                         if (gscCovRes.indexationCapture) await updateAirtableField(audit.airtable_record_id, 'Img_indexation_gsc', gscCovRes.indexationCapture);
                         if (gscCovRes.problemCapture) await updateAirtableField(audit.airtable_record_id, 'Img_probleme_indexation_gsc', gscCovRes.problemCapture);
                     }
