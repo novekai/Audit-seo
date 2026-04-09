@@ -231,9 +231,22 @@ export const initWorker = (io, db) => {
                 return await getSessionCookies(service);
             };
 
+            const hasAirtableValue = (value) =>
+                value != null &&
+                (
+                    typeof value !== 'string' ||
+                    value.trim() !== ''
+                );
+
+            const hasNumericValue = (value) =>
+                hasAirtableValue(value) && Number.isFinite(Number(value));
+
             let googleCookies = null;
             const sheetAuditUrl = audit.sheet_audit_url;
             const sheetPlanUrl = audit.sheet_plan_url;
+            const googleCreds = await getServiceCredentials('google');
+            const googleRefreshToken = googleCreds?.refresh_token || process.env.GOOGLE_REFRESH_TOKEN || null;
+            const googleApiAvailable = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && googleRefreshToken);
 
             // STEP 2: Google Sheets Plan d'Action — Direct Playwright Capture
             // Moved to Step 2 to satisfy user priority
@@ -242,28 +255,79 @@ export const initWorker = (io, db) => {
             const planStepsMap = {
                 "Img_planD'action": "plan_synthese",
                 "Img_Requetes_cles": "plan_requetes",
+                "Img_donnee_image": "plan_donnees_img",
                 "Img_donnee image": "plan_donnees_img",
                 "Img_longeur_page_plan": "plan_longueur"
             };
+            const planStepKeys = [...new Set(Object.values(planStepsMap))];
 
             if (!sheetPlanUrl) {
                 console.log(`[WORKER] [JOB ${job.id}] Missing Plan d'Action Sheet URL, skipping.`);
-                for (const k of Object.values(planStepsMap)) {
+                for (const k of planStepKeys) {
                     await updateStep(k, 'SKIP', "Lien Google Sheet plan d'action non fourni");
                 }
             } else {
-                console.log(`[WORKER] [JOB ${job.id}] Starting Plan d'Action captures (Playwright direct)...`);
-                for (const stepKey of Object.values(planStepsMap)) {
+                console.log(`[WORKER] [JOB ${job.id}] Starting Plan d'Action captures...`);
+                for (const stepKey of planStepKeys) {
                     await updateStep(stepKey, 'EN_COURS');
                 }
 
-                googleCookies = await getSessionCookies('google');
-                try {
-                    const planResults = await runWithTimeout(
-                        capturePlanDAction(sheetPlanUrl, auditId, googleCookies),
-                        300000, "Plan d'Action Capture"
-                    );
+                let planResults = null;
+                let planCaptureError = null;
+                let attemptedPlanCapture = false;
 
+                if (googleApiAvailable) {
+                    attemptedPlanCapture = true;
+                    try {
+                        console.log(`[WORKER] [JOB ${job.id}] Plan d'Action via Google Sheets API...`);
+                        planResults = await runWithTimeout(
+                            auditGoogleSheetsAPI(null, sheetPlanUrl, auditId, {
+                                refreshToken: googleRefreshToken,
+                                targets: ['plan']
+                            }),
+                            300000,
+                            "Plan d'Action Sheets API"
+                        );
+                    } catch (e) {
+                        planCaptureError = e;
+                        console.error(`[WORKER] [JOB ${job.id}] Plan d'Action API failed:`, e.message);
+                    }
+                }
+
+                const shouldFallbackToBrowser =
+                    !planResults ||
+                    Object.keys(planResults).length === 0 ||
+                    Object.values(planResults).every((res) => ['FAILED', 'ERROR'].includes(String(res?.statut || '').toUpperCase()));
+
+                if (shouldFallbackToBrowser) {
+                    googleCookies = googleCookies || await getSessionCookies('google');
+                }
+
+                if (shouldFallbackToBrowser && googleCookies) {
+                    attemptedPlanCapture = true;
+                    try {
+                        console.log(`[WORKER] [JOB ${job.id}] Plan d'Action fallback via session navigateur Google...`);
+                        planResults = await runWithTimeout(
+                            capturePlanDAction(sheetPlanUrl, auditId, googleCookies),
+                            300000,
+                            "Plan d'Action Capture"
+                        );
+                    } catch (e) {
+                        planCaptureError = e;
+                        console.error(`[WORKER] [JOB ${job.id}] Plan d'Action browser fallback failed:`, e.message);
+                    }
+                }
+
+                if (!planResults) {
+                    const fallbackStatus = attemptedPlanCapture ? 'FAILED' : 'SKIP';
+                    const fallbackMessage = attemptedPlanCapture
+                        ? (planCaptureError?.message || "Impossible de récupérer les captures du plan d'action.")
+                        : "Aucun compte Google connecté ne permet de lire le Google Sheet du plan d'action.";
+
+                    for (const stepKey of planStepKeys) {
+                        await updateStep(stepKey, fallbackStatus, fallbackMessage);
+                    }
+                } else {
                     for (const [fieldId, res] of Object.entries(planResults)) {
                         const stepKey = planStepsMap[fieldId];
                         if (stepKey) {
@@ -281,11 +345,6 @@ export const initWorker = (io, db) => {
                                 console.error(`[WORKER] Failed to update Airtable for ${fieldId}:`, e.message);
                             }
                         }
-                    }
-                } catch (e) {
-                    console.error(`[WORKER] [JOB ${job.id}] Plan d'Action capture failed:`, e.message);
-                    for (const stepKey of Object.values(planStepsMap)) {
-                        await updateStep(stepKey, 'FAILED', e.message);
                     }
                 }
             }
@@ -366,8 +425,8 @@ export const initWorker = (io, db) => {
                 const psiMobile = await runWithTimeout(auditPageSpeedMobile(siteUrl, auditId), 180000, 'PSI Mobile'); // 3m
                 await updateStep('psi_mobile', psiMobile.statut, psiMobile.details, psiMobile.capture);
                 if (audit.airtable_record_id) {
-                    if (psiMobile.score) {
-                        const mobileScorePercent = psiMobile.score / 100;
+                    if (hasNumericValue(psiMobile.score)) {
+                        const mobileScorePercent = Number(psiMobile.score) / 100;
                         await updateAirtableField(audit.airtable_record_id, 'pourcentage smartphone', mobileScorePercent);
                     }
                     if (psiMobile.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PSI_Mobile', psiMobile.capture);
@@ -384,8 +443,8 @@ export const initWorker = (io, db) => {
                 const psiDesktop = await runWithTimeout(auditPageSpeedDesktop(siteUrl, auditId), 180000, 'PSI Desktop'); // 3m
                 await updateStep('psi_desktop', psiDesktop.statut, psiDesktop.details, psiDesktop.capture);
                 if (audit.airtable_record_id) {
-                    if (psiDesktop.score) {
-                        const desktopScorePercent = psiDesktop.score / 100;
+                    if (hasNumericValue(psiDesktop.score)) {
+                        const desktopScorePercent = Number(psiDesktop.score) / 100;
                         await updateAirtableField(audit.airtable_record_id, 'pourcentage desktop', desktopScorePercent);
                     }
                     if (psiDesktop.capture) await updateAirtableField(audit.airtable_record_id, 'Img_PSI_Desktop', psiDesktop.capture);
@@ -400,6 +459,12 @@ export const initWorker = (io, db) => {
                 console.log(`[WORKER] [JOB ${job.id}] Missing Audit Sheet URL, skipping.`);
                 for (const k of ['sheet_images', 'sheet_meme_title', 'sheet_meta_desc_double', 'sheet_doublons_h1', 'sheet_h1_absente', 'sheet_h1_vides', 'sheet_h1_au_moins', 'sheet_hn_pas_h1', 'sheet_sauts_hn', 'sheet_hn_longue', 'sheet_mots_body', 'sheet_meta_desc', 'sheet_balise_title']) {
                     await updateStep(k, 'SKIP', 'Lien Google Sheet Audit non fourni');
+                }
+            } else if (!googleApiAvailable) {
+                const missingGoogleMessage = "Aucun compte Google connecté ne permet de lire le Google Sheet d'audit.";
+                console.log(`[WORKER] [JOB ${job.id}] ${missingGoogleMessage}`);
+                for (const k of ['sheet_images', 'sheet_meme_title', 'sheet_meta_desc_double', 'sheet_doublons_h1', 'sheet_h1_absente', 'sheet_h1_vides', 'sheet_h1_au_moins', 'sheet_hn_pas_h1', 'sheet_sauts_hn', 'sheet_hn_longue', 'sheet_mots_body', 'sheet_meta_desc', 'sheet_balise_title']) {
+                    await updateStep(k, 'SKIP', missingGoogleMessage);
                 }
             } else {
                 if (await checkCancellation()) return;
@@ -424,7 +489,10 @@ export const initWorker = (io, db) => {
                     await updateStep(stepKey, 'EN_COURS');
                 }
 
-                const sheetResults = await auditGoogleSheetsAPI(sheetAuditUrl, null, auditId);
+                const sheetResults = await auditGoogleSheetsAPI(sheetAuditUrl, null, auditId, {
+                    refreshToken: googleRefreshToken,
+                    targets: ['audit']
+                });
 
                 for (const [fieldId, res] of Object.entries(sheetResults)) {
                     const stepKey = sheetStepsMap[fieldId];
@@ -463,10 +531,7 @@ export const initWorker = (io, db) => {
 
             // STEP 9: Google Search Console (API-based)
             if (await checkCancellation()) return;
-            // Get user's Google refresh token (per-user first, then env var fallback)
-            const googleCreds = await getServiceCredentials('google');
-            const googleRefreshToken = googleCreds?.refresh_token || process.env.GOOGLE_REFRESH_TOKEN || null;
-            const gscApiAvailable = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && googleRefreshToken);
+            const gscApiAvailable = googleApiAvailable;
 
             try {
                 await updateStep('gsc_sitemaps', 'EN_COURS');
@@ -518,7 +583,7 @@ export const initWorker = (io, db) => {
                         console.log(`[WORKER] [JOB ${job.id}] Executing Step: MRM...`);
                         const mrmRes = await runWithTimeout(captureMrmProfondeur(audit.mrm_report_url, auditId, mrmAuth), 240000, 'MRM');
                         await updateStep('mrm_profondeur', mrmRes.statut, mrmRes.details, mrmRes.capture);
-                        if (audit.airtable_record_id && mrmRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_profondeur_clics', mrmRes.capture);
+                        if (audit.airtable_record_id && mrmRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_profondeur_clics_mrm', mrmRes.capture);
                     }
                 }
             } catch (e) {
@@ -580,7 +645,7 @@ export const initWorker = (io, db) => {
                 if (audit.airtable_record_id) {
                     if (gscPerfRes.capture1) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel1', gscPerfRes.capture1);
                     if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel2', gscPerfRes.capture2);
-                    if (gscPerfRes.clics) await updateAirtableField(audit.airtable_record_id, 'nombres de clics trafic actuel', gscPerfRes.clics);
+                    if (hasAirtableValue(gscPerfRes.clics)) await updateAirtableField(audit.airtable_record_id, 'nombres de clics trafic actuel', gscPerfRes.clics);
                     if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_donnee_brute_gcs', gscPerfRes.capture2);
                     if (gscPerfRes.bestQueryCapture) await updateAirtableField(audit.airtable_record_id, 'Img_meilleure_requete', gscPerfRes.bestQueryCapture);
                     if (gscPerfRes.queryPageClicksImpressionsCapture) await updateAirtableField(audit.airtable_record_id, 'Img_query_page_clicks_impressions', gscPerfRes.queryPageClicksImpressionsCapture);
@@ -602,7 +667,7 @@ export const initWorker = (io, db) => {
                 await updateStep('gsc_problemes_indexation', problemIndexationStep.status, problemIndexationStep.details, problemIndexationStep.outputUrl);
                 if (audit.airtable_record_id) {
                     if (gscCovRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_urls', gscCovRes.capture);
-                    if (gscCovRes.pagesIndexed) await updateAirtableField(audit.airtable_record_id, 'nombres de pages indexé trafic actuel', gscCovRes.pagesIndexed);
+                    if (hasAirtableValue(gscCovRes.pagesIndexed)) await updateAirtableField(audit.airtable_record_id, 'nombres de pages indexé trafic actuel', gscCovRes.pagesIndexed);
                     if (gscCovRes.indexationCapture) await updateAirtableField(audit.airtable_record_id, 'Img_indexation_gsc', gscCovRes.indexationCapture);
                     if (gscCovRes.problemCapture) await updateAirtableField(audit.airtable_record_id, 'Img_probleme_indexation_gsc', gscCovRes.problemCapture);
                 }
@@ -630,7 +695,7 @@ export const initWorker = (io, db) => {
                 if (audit.airtable_record_id) {
                     if (gscPerfRes.capture1) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel1', gscPerfRes.capture1);
                     if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel2', gscPerfRes.capture2);
-                    if (gscPerfRes.clics) await updateAirtableField(audit.airtable_record_id, 'nombres de clics trafic actuel', gscPerfRes.clics);
+                    if (hasAirtableValue(gscPerfRes.clics)) await updateAirtableField(audit.airtable_record_id, 'nombres de clics trafic actuel', gscPerfRes.clics);
                     if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_donnee_brute_gcs', gscPerfRes.capture2);
                     if (gscPerfRes.bestQueryCapture) await updateAirtableField(audit.airtable_record_id, 'Img_meilleure_requete', gscPerfRes.bestQueryCapture);
                     if (gscPerfRes.queryPageClicksImpressionsCapture) await updateAirtableField(audit.airtable_record_id, 'Img_query_page_clicks_impressions', gscPerfRes.queryPageClicksImpressionsCapture);
@@ -651,7 +716,7 @@ export const initWorker = (io, db) => {
                 await updateStep('gsc_problemes_indexation', problemIndexationStep.status, problemIndexationStep.details, problemIndexationStep.outputUrl);
                 if (audit.airtable_record_id) {
                     if (gscCovRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_urls', gscCovRes.capture);
-                    if (gscCovRes.pagesIndexed) await updateAirtableField(audit.airtable_record_id, 'nombres de pages indexé trafic actuel', gscCovRes.pagesIndexed);
+                    if (hasAirtableValue(gscCovRes.pagesIndexed)) await updateAirtableField(audit.airtable_record_id, 'nombres de pages indexé trafic actuel', gscCovRes.pagesIndexed);
                     if (gscCovRes.indexationCapture) await updateAirtableField(audit.airtable_record_id, 'Img_indexation_gsc', gscCovRes.indexationCapture);
                     if (gscCovRes.problemCapture) await updateAirtableField(audit.airtable_record_id, 'Img_probleme_indexation_gsc', gscCovRes.problemCapture);
                 }

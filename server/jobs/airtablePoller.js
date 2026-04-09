@@ -2,7 +2,7 @@ import Airtable from 'airtable';
 import { auditQueue } from './queue.js';
 import { v4 as uuidv4 } from 'uuid';
 import { reconcileAuditCompletion, shouldIgnoreAirtableStatusRegression } from '../utils/auditStatus.js';
-import { readGeneratedActionPlanUrl, readGeneratedSlidesUrl } from '../airtable.js';
+import { readAirtableFieldValue, readGeneratedActionPlanUrl, readGeneratedSlidesUrl } from '../airtable.js';
 
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 const table = base(process.env.AIRTABLE_TABLE_ID);
@@ -191,7 +191,7 @@ async function syncAirtableToDb(io, db) {
                     { key: 'sheet_balise_title', field: 'Img_balises_title' },
                     { key: 'plan_synthese', field: "Img_planD'action" },
                     { key: 'plan_requetes', field: 'Img_Requetes_cles' },
-                    { key: 'plan_donnees_img', field: 'Img_donnee image' },
+                    { key: 'plan_donnees_img', field: 'Img_donnee_image' },
                     { key: 'plan_longueur', field: 'Img_longeur_page_plan' },
                     { key: 'gsc_sitemaps', field: 'Img_sitemap_declaré' },
                     { key: 'gsc_https', field: 'Img_https' },
@@ -202,7 +202,7 @@ async function syncAirtableToDb(io, db) {
                     { key: 'gsc_indexation_image', field: 'Img_indexation_gsc' },
                     { key: 'gsc_problemes_indexation', field: 'Img_probleme_indexation_gsc' },
                     { key: 'gsc_top_pages', field: 'Img_meilleure_page' },
-                    { key: 'mrm_profondeur', field: 'Img_profondeur_clics' },
+                    { key: 'mrm_profondeur', field: 'Img_profondeur_clics_mrm' },
                     { key: 'ubersuggest_da', field: 'Img_autorité_domaine_UBERSUGGEST' },
                     { key: 'semrush_authority', field: 'Img_autorité_domaine_SEMRUSH' },
                     { key: 'ahrefs_authority', field: 'Img_autorité_domaine_AHREF' },
@@ -210,7 +210,7 @@ async function syncAirtableToDb(io, db) {
                 ];
 
                 for (const mapping of stepMappings) {
-                    const imageUrl = record.get(mapping.field);
+                    const imageUrl = readAirtableFieldValue(record, mapping.field);
                     let step = await db.get('SELECT * FROM audit_steps WHERE audit_id = ? AND step_key = ?', [localAudit.id, mapping.key]);
 
                     if (!step) {

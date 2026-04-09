@@ -7,6 +7,17 @@ export const GENERATED_ACTION_PLAN_FIELD_NAME =
     process.env.AIRTABLE_GENERATED_ACTION_PLAN_FIELD_NAME ||
     "Document Plan d'action Généré";
 
+const FIELD_ALIASES = new Map([
+    ['Img_donnee image', ['Img_donnee image', 'Img_donnee_image']],
+    ['Img_donnee_image', ['Img_donnee_image', 'Img_donnee image']],
+    ['Img_profondeur_clics', ['Img_profondeur_clics', 'Img_profondeur_clics_mrm']],
+    ['Img_profondeur_clics_mrm', ['Img_profondeur_clics_mrm', 'Img_profondeur_clics']],
+    ['Img_donnee_brute_gcs', ['Img_donnee_brute_gcs', 'Img_donnee brute gcs']],
+    ['Img_donnee brute gcs', ['Img_donnee brute gcs', 'Img_donnee_brute_gcs']],
+    ['Img_meilleure_page', ['Img_meilleure_page', 'Img_meilleure page']],
+    ['Img_meilleure page', ['Img_meilleure page', 'Img_meilleure_page']]
+]);
+
 const GENERATED_ACTION_PLAN_FIELD_CANDIDATES = Array.from(new Set([
     GENERATED_ACTION_PLAN_FIELD_NAME,
     "Document Plan d’actions Généré",
@@ -14,6 +25,25 @@ const GENERATED_ACTION_PLAN_FIELD_CANDIDATES = Array.from(new Set([
     "Document Plan d’Action Généré",
     "Document Plan d'Action Généré"
 ].filter(Boolean)));
+
+function isNullishOrEmptyString(value) {
+    return value == null || (typeof value === 'string' && value.trim() === '');
+}
+
+function isUnknownFieldError(err) {
+    const message = String(err?.message || '').toLowerCase();
+    return (
+        err?.statusCode === 422 ||
+        message.includes('unknown field') ||
+        message.includes('cannot find field') ||
+        message.includes('field') && message.includes('does not exist') ||
+        message.includes('invalid field')
+    );
+}
+
+export function getAirtableFieldCandidates(fieldName) {
+    return FIELD_ALIASES.get(fieldName) || [fieldName];
+}
 
 function extractAirtableUrl(value, visited = new Set()) {
     if (!value) return null;
@@ -75,19 +105,40 @@ export async function updateAirtableStatut(recordId, statut) {
 }
 
 export async function updateAirtableField(recordId, fieldName, value) {
-    if (!value) {
+    if (isNullishOrEmptyString(value)) {
         console.warn(`[AIRTABLE] Skipping update for ${fieldName}: value is null/empty`);
         return;
     }
-    console.log(`[AIRTABLE] SYNC FIELD: record=${recordId}, field="${fieldName}"`);
-    try {
-        await table.update(recordId, { [fieldName]: value });
-        console.log(`[AIRTABLE] SUCCESS: ${fieldName} updated.`);
-    } catch (err) {
-        console.error(`[AIRTABLE] ERROR syncing ${fieldName}:`, err.message);
-        if (err.message.includes('invalid') || err.message.includes('cell value')) {
-            console.warn(`[AIRTABLE] Field "${fieldName}" likely expects Attachment format. If you want a link, change the field type to "URL" or "Single line text" in Airtable.`);
+
+    const candidates = getAirtableFieldCandidates(fieldName);
+    let lastError = null;
+
+    for (const candidateField of candidates) {
+        console.log(`[AIRTABLE] SYNC FIELD: record=${recordId}, field="${candidateField}"`);
+        try {
+            await table.update(recordId, { [candidateField]: value });
+            console.log(`[AIRTABLE] SUCCESS: ${candidateField} updated.`);
+            return;
+        } catch (err) {
+            lastError = err;
+            console.error(`[AIRTABLE] ERROR syncing ${candidateField}:`, err.message);
+
+            if (
+                isUnknownFieldError(err) &&
+                candidateField !== candidates[candidates.length - 1]
+            ) {
+                console.warn(`[AIRTABLE] Field "${candidateField}" not found, trying alias...`);
+                continue;
+            }
+
+            if (String(err?.message || '').includes('invalid') || String(err?.message || '').includes('cell value')) {
+                console.warn(`[AIRTABLE] Field "${candidateField}" likely expects Attachment format. If you want a link, change the field type to "URL" or "Single line text" in Airtable.`);
+            }
         }
+    }
+
+    if (lastError) {
+        throw lastError;
     }
 }
 
@@ -128,6 +179,22 @@ function readGeneratedUrlFromFields(record, fieldNames) {
         const url = extractAirtableUrl(rawValue);
         if (url) {
             return url;
+        }
+    }
+
+    return null;
+}
+
+export function readAirtableFieldValue(record, fieldName) {
+    const candidates = getAirtableFieldCandidates(fieldName);
+    for (const candidateField of candidates) {
+        const rawValue =
+            typeof record?.get === 'function'
+                ? record.get(candidateField)
+                : record?.[candidateField];
+
+        if (!isNullishOrEmptyString(rawValue)) {
+            return rawValue;
         }
     }
 

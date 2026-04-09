@@ -47,7 +47,7 @@ const PLAN_TABS = [
         cloudinarySlug: "plan-requetes"
     },
     {
-        airtableField: "Img_donnee image",
+        airtableField: "Img_donnee_image",
         tabName: "Données Images",
         cloudinarySlug: "plan-donnee-img"
     },

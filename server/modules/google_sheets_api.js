@@ -136,7 +136,10 @@ const CAPTURE_CONFIGS = [
     },
 
     // ===== SHEET PLAN D'ACTION =====
-    // Plan d'action captures are done via direct Playwright screenshots (see sheet_plan_capture.js)
+    { airtableField: "Img_planD'action", target: "plan", mode: "raw", tabName: "Synthèse Audit - Plan d'action", skipIfEmpty: true },
+    { airtableField: "Img_Requetes_cles", target: "plan", mode: "raw", tabName: "Requêtes Clés / Calédito", skipIfEmpty: true },
+    { airtableField: "Img_donnee_image", target: "plan", mode: "raw", tabName: "Données Images", skipIfEmpty: true },
+    { airtableField: "Img_longeur_page_plan", target: "plan", mode: "raw", tabName: "Longueur de page", skipIfEmpty: true },
 ];
 
 /**
@@ -144,9 +147,13 @@ const CAPTURE_CONFIGS = [
  * GOOGLE SHEETS CLIENT (OAuth refresh_token)
  * =========================
  */
-function sheetsClient() {
+function sheetsClient(refreshToken) {
     const oauth2 = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET);
-    oauth2.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+    const effectiveRefreshToken = refreshToken || process.env.GOOGLE_REFRESH_TOKEN;
+    if (!effectiveRefreshToken) {
+        throw new Error("Aucun compte Google connecté pour lire les Google Sheets.");
+    }
+    oauth2.setCredentials({ refresh_token: effectiveRefreshToken });
     return google.sheets({ version: "v4", auth: oauth2 });
 }
 
@@ -154,6 +161,48 @@ function extractSpreadsheetId(url) {
     if (!url) return null;
     const m = String(url).match(/\/d\/([a-zA-Z0-9-_]+)/);
     return m ? m[1] : null;
+}
+
+function buildGoogleSheetReconnectMessage() {
+    return "Le compte Google n'est plus connecté à l'application. Reconnectez le bon compte Google dans les paramètres, puis relancez l'audit.";
+}
+
+function buildGoogleSheetAccessMessage() {
+    return "Le compte Google connecté n'a pas accès à ce Google Sheet. Connectez le bon compte Google ou partagez ce document avec ce compte, puis relancez l'audit.";
+}
+
+function normalizeSheetsErrorMessage(error, tabName) {
+    const rawMessage = String(
+        error?.response?.data?.error?.message ||
+        error?.response?.data?.error ||
+        error?.message ||
+        ''
+    ).trim();
+    const normalized = rawMessage.toLowerCase();
+
+    if (
+        !rawMessage ||
+        /no google refresh token available|invalid_grant|invalid credentials|login required|unauthorized|auth/i.test(normalized)
+    ) {
+        return buildGoogleSheetReconnectMessage();
+    }
+
+    if (
+        error?.code === 401 ||
+        error?.code === 403 ||
+        /permission|forbidden|access denied|insufficient/i.test(normalized)
+    ) {
+        return buildGoogleSheetAccessMessage();
+    }
+
+    if (
+        error?.code === 404 ||
+        /unable to parse range|requested entity was not found|not found/i.test(normalized)
+    ) {
+        return `Le Google Sheet ou l'onglet "${tabName}" est introuvable. Vérifiez le lien du document et le nom de l'onglet, puis relancez l'audit.`;
+    }
+
+    return `Impossible de lire l'onglet "${tabName}" dans Google Sheets. Vérifiez que le bon compte Google est connecté et qu'il a accès à ce document, puis relancez l'audit.`;
 }
 
 function norm(s) {
@@ -200,8 +249,9 @@ async function readTab(sheets, spreadsheetId, tabName) {
         });
         return { values: res?.data?.values || [], found: true };
     } catch (e) {
+        const userMessage = normalizeSheetsErrorMessage(e, tabName);
         console.error(`[SHEETS-API] Erreur lecture onglet "${tabName}": ${e.message}`);
-        return { values: [], found: false };
+        return { values: [], found: false, error: userMessage };
     }
 }
 
@@ -270,8 +320,11 @@ function sortRows(rows, colIdx, sort) {
     });
 }
 
-function buildTable(values, cfg, { found = true } = {}) {
+function buildTable(values, cfg, { found = true, error = null } = {}) {
     if (!values || values.length === 0) {
+        if (!found && error) {
+            return { table: null, reason: error };
+        }
         return { table: null, reason: found ? "Onglet vide — aucune donnée dans cet onglet" : `Onglet "${cfg.tabName}" introuvable dans le Google Sheet` };
     }
 
@@ -430,27 +483,34 @@ async function htmlToPng(html, outPath) {
  * POINT D'ENTRÉE DU MODULE
  * =========================
  */
-export async function auditGoogleSheetsAPI(sheetAuditUrl, sheetPlanUrl, auditId) {
+export async function auditGoogleSheetsAPI(sheetAuditUrl, sheetPlanUrl, auditId, options = {}) {
     const auditSpreadsheetId = extractSpreadsheetId(sheetAuditUrl);
     const planSpreadsheetId = extractSpreadsheetId(sheetPlanUrl);
+    const allowedTargets = Array.isArray(options.targets) && options.targets.length
+        ? new Set(options.targets)
+        : null;
 
-    if (!auditSpreadsheetId) {
-        console.error("[SHEETS-API] URL de sheet audit invalide.");
-        return { error: "URL Sheet Audit invalide." };
+    if (!auditSpreadsheetId && !planSpreadsheetId) {
+        console.error("[SHEETS-API] URL de Google Sheet invalide.");
+        return { error: "URL de Google Sheet invalide." };
     }
 
-    const sheets = sheetsClient();
+    const sheets = sheetsClient(options.refreshToken);
     const results = {};
 
     console.log(`[SHEETS-API] Démarrage (Audit: ${auditSpreadsheetId}, Plan: ${planSpreadsheetId || 'N/A'})`);
 
     for (const cfg of CAPTURE_CONFIGS) {
+        if (allowedTargets && !allowedTargets.has(cfg.target)) {
+            continue;
+        }
+
         const spreadsheetId = cfg.target === "audit" ? auditSpreadsheetId : planSpreadsheetId;
         if (!spreadsheetId) continue;
 
         try {
-            const { values, found } = await readTab(sheets, spreadsheetId, cfg.tabName);
-            const built = buildTable(values, cfg, { found });
+            const { values, found, error } = await readTab(sheets, spreadsheetId, cfg.tabName);
+            const built = buildTable(values, cfg, { found, error });
 
             if (!built.table) {
                 results[cfg.airtableField] = { statut: "SKIP", details: built.reason || "Aucune donnée" };
