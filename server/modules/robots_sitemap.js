@@ -47,6 +47,9 @@ async function renderSitemapCapture(page, auditId, { title, subtitle, lines, ton
         ? lines
         : ['Aucune ligne exploitable disponible pour cette capture.'];
 
+    // Reset to a proper HTML page — the page may be showing an XML sitemap where document.body is null
+    await page.setContent('<html><body></body></html>', { waitUntil: 'load' });
+
     const dimensions = await page.evaluate(({ title, subtitle, lines, footerNote, palette }) => {
         document.body.innerHTML = '';
         document.body.style.cssText = 'background: #020617; margin: 0; padding: 0; overflow: hidden;';
