@@ -489,6 +489,9 @@ export async function auditGoogleSheetsAPI(sheetAuditUrl, sheetPlanUrl, auditId,
     const allowedTargets = Array.isArray(options.targets) && options.targets.length
         ? new Set(options.targets)
         : null;
+    const allowedFields = Array.isArray(options.fields) && options.fields.length
+        ? new Set(options.fields)
+        : null;
 
     if (!auditSpreadsheetId && !planSpreadsheetId) {
         console.error("[SHEETS-API] URL de Google Sheet invalide.");
@@ -502,6 +505,9 @@ export async function auditGoogleSheetsAPI(sheetAuditUrl, sheetPlanUrl, auditId,
 
     for (const cfg of CAPTURE_CONFIGS) {
         if (allowedTargets && !allowedTargets.has(cfg.target)) {
+            continue;
+        }
+        if (allowedFields && !allowedFields.has(cfg.airtableField)) {
             continue;
         }
 
