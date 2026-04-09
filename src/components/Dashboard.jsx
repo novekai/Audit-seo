@@ -34,6 +34,9 @@ const Layout = ({ user, onLogout }) => {
         { id: 'settings', label: 'Paramètres', icon: SettingsIcon },
     ];
 
+    const currentTab = menuItems.find((item) => item.id === activeTab);
+    const isSettingsTab = activeTab === 'settings';
+
     return (
         <div className="min-h-screen flex text-slate-900 overflow-hidden relative">
             {isSidebarOpen && (
@@ -150,15 +153,21 @@ const Layout = ({ user, onLogout }) => {
                     </div>
                 </header>
 
-                <section className="p-4 lg:p-8">
+                <section className={isSettingsTab ? 'p-4 lg:p-6' : 'p-4 lg:p-8'}>
                     <div className="mb-6 lg:mb-8">
                         <h2 className="text-xl lg:text-2xl font-bold mb-2">
-                            {menuItems.find(i => i.id === activeTab)?.label}
+                            {currentTab?.label}
                         </h2>
                         <div className="h-1 w-16 lg:w-20 bg-blue-500 rounded-full" />
                     </div>
 
-                    <div className="glass rounded-3xl p-4 lg:p-8 border border-slate-200/80 relative overflow-hidden min-h-[calc(100vh-12rem)]">
+                    <div
+                        className={
+                            isSettingsTab
+                                ? 'relative min-h-[calc(100vh-12rem)]'
+                                : 'glass rounded-3xl border border-slate-200/80 p-4 lg:p-8 relative overflow-hidden min-h-[calc(100vh-12rem)]'
+                        }
+                    >
                         {activeTab === 'new-audit' && <NewAuditForm onAuditSuccess={() => handleTabChange('progression')} />}
                         {activeTab === 'slides' && <Slides />}
                         {activeTab === 'progression' && <Progression onOpenSlides={() => handleTabChange('slides')} />}
