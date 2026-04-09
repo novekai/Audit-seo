@@ -530,12 +530,7 @@ const Settings = () => {
                             <SettingsIcon className="h-3.5 w-3.5" />
                             Parametres de connexion
                         </div>
-                        <div className="space-y-3">
-                            <h1 className="settings-display max-w-3xl text-3xl font-black tracking-tight text-slate-900 lg:text-[2.6rem] lg:leading-[1.05]">
-                                Connecter les bons comptes sans friction ni hesitation
-                            </h1>
-                          
-                        </div>
+                       
                        
                     </div>
 
