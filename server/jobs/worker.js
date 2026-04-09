@@ -152,9 +152,9 @@ export const initWorker = (io, db) => {
                 if (audit.airtable_record_id) {
                     if (robotsResult.robots_txt.statut === 'SUCCESS') {
                         console.log(`[WORKER] [JOB ${job.id}] Syncing Robots URL to Airtable...`);
-                        await updateAirtableField(audit.airtable_record_id, 'robot', robotsResult.robots_txt.url);
+                        try { await updateAirtableField(audit.airtable_record_id, 'robot', robotsResult.robots_txt.url); } catch (e) { console.error(`[WORKER] Airtable sync failed for robot:`, e.message); }
                         if (robotsResult.robots_txt.capture) {
-                            await updateAirtableField(audit.airtable_record_id, 'Img_Robots_Txt', robotsResult.robots_txt.capture);
+                            try { await updateAirtableField(audit.airtable_record_id, 'Img_Robots_Txt', robotsResult.robots_txt.capture); } catch (e) { console.error(`[WORKER] Airtable sync failed for Img_Robots_Txt:`, e.message); }
                         }
                     }
                 }
@@ -166,10 +166,10 @@ export const initWorker = (io, db) => {
                 // Synchronisation Sitemap vers Airtable
                 if (audit.airtable_record_id) {
                     const sitemapUrlValue = robotsResult.sitemap.url || 'Le fichier sitemap(s) n\'existe pas';
-                    await updateAirtableField(audit.airtable_record_id, 'sitemaps', sitemapUrlValue);
+                    try { await updateAirtableField(audit.airtable_record_id, 'sitemaps', sitemapUrlValue); } catch (e) { console.error(`[WORKER] Airtable sync failed for sitemaps:`, e.message); }
                     if (robotsResult.sitemap.capture) {
                         console.log(`[WORKER] [JOB ${job.id}] Synchronisation de la capture Sitemap vers Airtable...`);
-                        await updateAirtableField(audit.airtable_record_id, 'Img_Sitemap', robotsResult.sitemap.capture);
+                        try { await updateAirtableField(audit.airtable_record_id, 'Img_Sitemap', robotsResult.sitemap.capture); } catch (e) { console.error(`[WORKER] Airtable sync failed for Img_Sitemap:`, e.message); }
                     }
                 }
             } catch (e) {
@@ -402,13 +402,13 @@ export const initWorker = (io, db) => {
 
                 if (audit.airtable_record_id) {
                     if (respResult.capture) {
-                        await updateAirtableField(audit.airtable_record_id, 'Img_AmIResponsive', respResult.capture);
+                        try { await updateAirtableField(audit.airtable_record_id, 'Img_AmIResponsive', respResult.capture); } catch (e) { console.error(`[WORKER] Airtable sync failed for Img_AmIResponsive:`, e.message); }
                     }
                     if (respResult.menu_capture_1) {
-                        await updateAirtableField(audit.airtable_record_id, 'Img_menu_mobile_1', respResult.menu_capture_1);
+                        try { await updateAirtableField(audit.airtable_record_id, 'Img_menu_mobile_1', respResult.menu_capture_1); } catch (e) { console.error(`[WORKER] Airtable sync failed for Img_menu_mobile_1:`, e.message); }
                     }
                     if (respResult.menu_capture_2) {
-                        await updateAirtableField(audit.airtable_record_id, 'Img_menu_mobile_2', respResult.menu_capture_2);
+                        try { await updateAirtableField(audit.airtable_record_id, 'Img_menu_mobile_2', respResult.menu_capture_2); } catch (e) { console.error(`[WORKER] Airtable sync failed for Img_menu_mobile_2:`, e.message); }
                     }
                 }
             } catch (e) {
@@ -658,12 +658,19 @@ export const initWorker = (io, db) => {
                     await updateStep('gsc_meilleure_requete', bestQueryStep.status, bestQueryStep.details, bestQueryStep.outputUrl);
                     await updateStep('gsc_query_page_clicks_impressions', queryTableStep.status, queryTableStep.details, queryTableStep.outputUrl);
                     if (audit.airtable_record_id) {
-                        if (gscPerfRes.capture1) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel1', gscPerfRes.capture1);
-                        if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel2', gscPerfRes.capture2);
-                        if (hasAirtableValue(gscPerfRes.clics)) await updateAirtableField(audit.airtable_record_id, 'nombres de clics trafic actuel', gscPerfRes.clics);
-                        if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_donnee_brute_gcs', gscPerfRes.capture2);
-                        if (gscPerfRes.bestQueryCapture) await updateAirtableField(audit.airtable_record_id, 'Img_meilleure_requete', gscPerfRes.bestQueryCapture);
-                        if (gscPerfRes.queryPageClicksImpressionsCapture) await updateAirtableField(audit.airtable_record_id, 'Img_query_page_clicks_impressions', gscPerfRes.queryPageClicksImpressionsCapture);
+                        const airtableGscPerfWrites = [
+                            [gscPerfRes.capture1, 'Img_trafic actuel1'],
+                            [gscPerfRes.capture2, 'Img_trafic actuel2'],
+                            [hasAirtableValue(gscPerfRes.clics) ? gscPerfRes.clics : null, 'nombres de clics trafic actuel'],
+                            [gscPerfRes.capture2, 'Img_donnee_brute_gcs'],
+                            [gscPerfRes.bestQueryCapture, 'Img_meilleure_requete'],
+                            [gscPerfRes.queryPageClicksImpressionsCapture, 'Img_query_page_clicks_impressions'],
+                        ];
+                        for (const [val, field] of airtableGscPerfWrites) {
+                            if (val) {
+                                try { await updateAirtableField(audit.airtable_record_id, field, val); } catch (e) { console.error(`[WORKER] Airtable sync failed for ${field}:`, e.message); }
+                            }
+                        }
                     }
                 } catch (e) {
                     console.error(`[WORKER] [JOB ${job.id}] GSC Performance API failed:`, e.message);
@@ -692,10 +699,17 @@ export const initWorker = (io, db) => {
                     await updateStep('gsc_indexation_image', indexationStep.status, indexationStep.details, indexationStep.outputUrl);
                     await updateStep('gsc_problemes_indexation', problemIndexationStep.status, problemIndexationStep.details, problemIndexationStep.outputUrl);
                     if (audit.airtable_record_id) {
-                        if (gscCovRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_urls', gscCovRes.capture);
-                        if (hasNumericValue(gscCovRes.pagesIndexed)) await updateAirtableField(audit.airtable_record_id, 'nombres de pages indexé trafic actuel', Number(String(gscCovRes.pagesIndexed).replace(/[\s\u00A0.,]/g, '')));
-                        if (gscCovRes.indexationCapture) await updateAirtableField(audit.airtable_record_id, 'Img_indexation_gsc', gscCovRes.indexationCapture);
-                        if (gscCovRes.problemCapture) await updateAirtableField(audit.airtable_record_id, 'Img_probleme_indexation_gsc', gscCovRes.problemCapture);
+                        const airtableGscCovWrites = [
+                            [gscCovRes.capture, 'Img_urls'],
+                            [hasNumericValue(gscCovRes.pagesIndexed) ? Number(String(gscCovRes.pagesIndexed).replace(/[\s\u00A0.,]/g, '')) : null, 'nombres de pages indexé trafic actuel'],
+                            [gscCovRes.indexationCapture, 'Img_indexation_gsc'],
+                            [gscCovRes.problemCapture, 'Img_probleme_indexation_gsc'],
+                        ];
+                        for (const [val, field] of airtableGscCovWrites) {
+                            if (val != null) {
+                                try { await updateAirtableField(audit.airtable_record_id, field, val); } catch (e) { console.error(`[WORKER] Airtable sync failed for ${field}:`, e.message); }
+                            }
+                        }
                     }
                 } catch (e) {
                     console.error(`[WORKER] [JOB ${job.id}] GSC Coverage API failed:`, e.message);
@@ -739,12 +753,19 @@ export const initWorker = (io, db) => {
                     await updateStep('gsc_meilleure_requete', bestQueryStep.status, bestQueryStep.details, bestQueryStep.outputUrl);
                     await updateStep('gsc_query_page_clicks_impressions', queryTableStep.status, queryTableStep.details, queryTableStep.outputUrl);
                     if (audit.airtable_record_id) {
-                        if (gscPerfRes.capture1) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel1', gscPerfRes.capture1);
-                        if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_trafic actuel2', gscPerfRes.capture2);
-                        if (hasAirtableValue(gscPerfRes.clics)) await updateAirtableField(audit.airtable_record_id, 'nombres de clics trafic actuel', gscPerfRes.clics);
-                        if (gscPerfRes.capture2) await updateAirtableField(audit.airtable_record_id, 'Img_donnee_brute_gcs', gscPerfRes.capture2);
-                        if (gscPerfRes.bestQueryCapture) await updateAirtableField(audit.airtable_record_id, 'Img_meilleure_requete', gscPerfRes.bestQueryCapture);
-                        if (gscPerfRes.queryPageClicksImpressionsCapture) await updateAirtableField(audit.airtable_record_id, 'Img_query_page_clicks_impressions', gscPerfRes.queryPageClicksImpressionsCapture);
+                        const airtableGscPerfWrites2 = [
+                            [gscPerfRes.capture1, 'Img_trafic actuel1'],
+                            [gscPerfRes.capture2, 'Img_trafic actuel2'],
+                            [hasAirtableValue(gscPerfRes.clics) ? gscPerfRes.clics : null, 'nombres de clics trafic actuel'],
+                            [gscPerfRes.capture2, 'Img_donnee_brute_gcs'],
+                            [gscPerfRes.bestQueryCapture, 'Img_meilleure_requete'],
+                            [gscPerfRes.queryPageClicksImpressionsCapture, 'Img_query_page_clicks_impressions'],
+                        ];
+                        for (const [val, field] of airtableGscPerfWrites2) {
+                            if (val) {
+                                try { await updateAirtableField(audit.airtable_record_id, field, val); } catch (e) { console.error(`[WORKER] Airtable sync failed for ${field}:`, e.message); }
+                            }
+                        }
                     }
                 } catch (e) {
                     console.error(`[WORKER] [JOB ${job.id}] GSC Performance failed:`, e.message);
@@ -772,10 +793,17 @@ export const initWorker = (io, db) => {
                     await updateStep('gsc_indexation_image', indexationStep.status, indexationStep.details, indexationStep.outputUrl);
                     await updateStep('gsc_problemes_indexation', problemIndexationStep.status, problemIndexationStep.details, problemIndexationStep.outputUrl);
                     if (audit.airtable_record_id) {
-                        if (gscCovRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_urls', gscCovRes.capture);
-                        if (hasNumericValue(gscCovRes.pagesIndexed)) await updateAirtableField(audit.airtable_record_id, 'nombres de pages indexé trafic actuel', Number(String(gscCovRes.pagesIndexed).replace(/[\s\u00A0.,]/g, '')));
-                        if (gscCovRes.indexationCapture) await updateAirtableField(audit.airtable_record_id, 'Img_indexation_gsc', gscCovRes.indexationCapture);
-                        if (gscCovRes.problemCapture) await updateAirtableField(audit.airtable_record_id, 'Img_probleme_indexation_gsc', gscCovRes.problemCapture);
+                        const airtableGscCovWrites2 = [
+                            [gscCovRes.capture, 'Img_urls'],
+                            [hasNumericValue(gscCovRes.pagesIndexed) ? Number(String(gscCovRes.pagesIndexed).replace(/[\s\u00A0.,]/g, '')) : null, 'nombres de pages indexé trafic actuel'],
+                            [gscCovRes.indexationCapture, 'Img_indexation_gsc'],
+                            [gscCovRes.problemCapture, 'Img_probleme_indexation_gsc'],
+                        ];
+                        for (const [val, field] of airtableGscCovWrites2) {
+                            if (val != null) {
+                                try { await updateAirtableField(audit.airtable_record_id, field, val); } catch (e) { console.error(`[WORKER] Airtable sync failed for ${field}:`, e.message); }
+                            }
+                        }
                     }
                 } catch (e) {
                     console.error(`[WORKER] [JOB ${job.id}] GSC Coverage failed:`, e.message);

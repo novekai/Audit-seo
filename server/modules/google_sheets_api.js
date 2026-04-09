@@ -455,6 +455,49 @@ function escapeHtml(s) {
         .replaceAll("'", "&#039;");
 }
 
+function renderOkStatusHtml(title) {
+    return `<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #fff; }
+  .wrap {
+    display: inline-block;
+    padding: 28px 38px;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+  .card {
+    border: 2px solid #22c55e;
+    border-radius: 12px;
+    padding: 22px 32px;
+    background: #f0fdf4;
+    min-width: 420px;
+  }
+  .title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #166534;
+    margin-bottom: 6px;
+  }
+  .msg {
+    font-size: 13px;
+    color: #15803d;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap" id="capture">
+    <div class="card">
+      <div class="title">${escapeHtml(title)}</div>
+      <div class="msg">Aucun probleme detecte sur ce critere.</div>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
 async function htmlToPng(html, outPath) {
     const browser = await chromium.launch({
         headless: true,
@@ -519,7 +562,23 @@ export async function auditGoogleSheetsAPI(sheetAuditUrl, sheetPlanUrl, auditId,
             const built = buildTable(values, cfg, { found, error });
 
             if (!built.table) {
-                results[cfg.airtableField] = { statut: "SKIP", details: built.reason || "Aucune donnée" };
+                // Tab found but no matching rows → generate "OK" capture instead of skipping
+                if (found && cfg.skipIfEmpty) {
+                    console.log(`[SHEETS-API] Aucun problème trouvé pour ${cfg.airtableField} (${cfg.tabName}) — génération capture OK`);
+                    const okHtml = renderOkStatusHtml(`${cfg.tabName} — Aucun problème`);
+                    const tmpDir = process.env.RAILWAY_ENVIRONMENT ? "/tmp" : ".";
+                    const pngPath = path.join(tmpDir, `sheet_${cfg.airtableField}_ok_${uuidv4()}.png`);
+                    await htmlToPng(okHtml, pngPath);
+                    const cloudinaryUrl = await uploadToCloudinary(pngPath, `audit-results/${auditId}`);
+                    if (fs.existsSync(pngPath)) fs.unlinkSync(pngPath);
+                    results[cfg.airtableField] = {
+                        statut: "SUCCESS",
+                        capture: cloudinaryUrl?.secure_url || cloudinaryUrl?.url || cloudinaryUrl,
+                        details: built.reason || "Aucun problème détecté"
+                    };
+                } else {
+                    results[cfg.airtableField] = { statut: "SKIP", details: built.reason || "Aucune donnée" };
+                }
                 continue;
             }
 
