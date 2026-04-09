@@ -560,12 +560,16 @@ async function triggerGoogleSlidesWebhook(recordId, maxRetries = 3) {
 
                 // Retry on transient errors (503, 502, "not ready", cold start)
                 const isTransient = response.status === 503 || response.status === 502 ||
-                    /not ready|loading|starting|initializ/i.test(rawText);
+                    /not ready|loading|starting|initializ|database/i.test(rawText);
                 if (isTransient && attempt < maxRetries) {
                     const delay = attempt * 5000;
                     console.warn(`[SLIDES] Transient error, retrying in ${delay}ms...`);
                     await new Promise(r => setTimeout(r, delay));
                     continue;
+                }
+
+                if (isTransient) {
+                    throw new Error("L'automatisation de génération des slides ne tourne pas actuellement. Veuillez réessayer dans quelques minutes.");
                 }
 
                 throw lastError;
