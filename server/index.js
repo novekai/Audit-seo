@@ -807,6 +807,8 @@ app.post('/api/sessions/import/:service', authenticateToken, async (req, res) =>
         const encryptedCookies = encrypt(JSON.stringify(normalized));
         const sessionId = uuidv4();
 
+        // A saved browser session should become the active auth method for this service.
+        await db.run('DELETE FROM service_credentials WHERE user_id = ? AND service = ?', [userId, service]);
         await db.run('DELETE FROM user_sessions WHERE user_id = ? AND service = ?', [userId, service]);
         await db.run(
             'INSERT INTO user_sessions (id, user_id, service, encrypted_cookies) VALUES (?, ?, ?, ?)',
@@ -915,7 +917,7 @@ app.get('/api/credentials/status', authenticateToken, async (req, res) => {
             });
         }
 
-        // MRM & Ubersuggest: check credentials table, then legacy cookies
+        // MRM & Ubersuggest: check credentials table, then saved browser sessions
         for (const svc of ['mrm', 'ubersuggest']) {
             const cred = await db.get(
                 'SELECT created_at, updated_at FROM service_credentials WHERE user_id = ? AND service = ?',
@@ -929,7 +931,15 @@ app.get('/api/credentials/status', authenticateToken, async (req, res) => {
                     [userId, svc]
                 );
                 if (session) {
-                    result.push({ service: svc, status: 'active', auth_type: 'cookie', legacy: true, created_at: session.created_at });
+                    const isUbersuggestSession = svc === 'ubersuggest';
+                    result.push({
+                        service: svc,
+                        status: 'active',
+                        auth_type: isUbersuggestSession ? 'session' : 'cookie',
+                        legacy: !isUbersuggestSession,
+                        provider: isUbersuggestSession ? 'google' : 'manual',
+                        created_at: session.created_at
+                    });
                 } else {
                     result.push({ service: svc, status: 'not_configured' });
                 }

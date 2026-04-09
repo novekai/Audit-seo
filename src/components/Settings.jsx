@@ -7,9 +7,14 @@ const Settings = () => {
         mrm: { email: '', password: '' },
         ubersuggest: { email: '', password: '' }
     });
+    const [sessionInputs, setSessionInputs] = useState({
+        ubersuggest: ''
+    });
     const [showPassword, setShowPassword] = useState({ mrm: false, ubersuggest: false });
     const [saving, setSaving] = useState({});
     const [testing, setTesting] = useState({});
+    const [importingSessions, setImportingSessions] = useState({});
+    const [showSessionImport, setShowSessionImport] = useState({ ubersuggest: false });
     const [messages, setMessages] = useState({});
 
     const fetchStatus = async () => {
@@ -51,6 +56,16 @@ const Settings = () => {
         return connections.find(c => c.service === service);
     };
 
+    const getMessageClasses = (type) => {
+        if (type === 'success') {
+            return 'bg-green-500/10 text-green-500 border border-green-500/20';
+        }
+        if (type === 'info') {
+            return 'bg-blue-500/10 text-blue-600 border border-blue-500/20';
+        }
+        return 'bg-red-500/10 text-red-400 border border-red-500/20';
+    };
+
     const saveCredentials = async (service) => {
         const { email, password } = credentialInputs[service];
         if (!email?.trim() || !password?.trim()) {
@@ -73,6 +88,8 @@ const Settings = () => {
             if (res.ok) {
                 setMessages(m => ({ ...m, [service]: { type: 'success', text: 'Identifiants enregistrés et chiffrés !' } }));
                 setCredentialInputs(c => ({ ...c, [service]: { email: '', password: '' } }));
+                setShowSessionImport(s => ({ ...s, [service]: false }));
+                setSessionInputs(s => ({ ...s, [service]: '' }));
                 fetchStatus();
             } else {
                 setMessages(m => ({ ...m, [service]: { type: 'error', text: data.error } }));
@@ -88,18 +105,18 @@ const Settings = () => {
         if (!confirm(`Supprimer les identifiants ${service} ?`)) return;
         try {
             const token = localStorage.getItem('token');
-            // Delete credentials
             await fetch(`/api/credentials/${service}`, {
                 method: 'DELETE',
                 headers: { 'Authorization': `Bearer ${token}` },
                 credentials: 'include'
             });
-            // Also delete legacy cookies if any
             await fetch(`/api/sessions/delete/${service}`, {
                 method: 'DELETE',
                 headers: { 'Authorization': `Bearer ${token}` },
                 credentials: 'include'
             }).catch(() => {});
+            setShowSessionImport(s => ({ ...s, [service]: false }));
+            setSessionInputs(s => ({ ...s, [service]: '' }));
             setMessages(m => ({ ...m, [service]: { type: 'success', text: 'Identifiants supprimés.' } }));
             fetchStatus();
         } catch { }
@@ -126,6 +143,98 @@ const Settings = () => {
             setMessages(m => ({ ...m, [service]: { type: 'error', text: 'Erreur réseau' } }));
         } finally {
             setTesting(t => ({ ...t, [service]: false }));
+        }
+    };
+
+    const beginGoogleSessionConnect = (service, loginUrl) => {
+        const googleStatus = getServiceStatus('google');
+
+        if (service === 'ubersuggest' && googleStatus?.status !== 'active') {
+            setMessages(m => ({
+                ...m,
+                [service]: {
+                    type: 'error',
+                    text: 'Connectez d’abord Google Search Console, puis utilisez le meme compte Google pour ouvrir Ubersuggest.'
+                }
+            }));
+            return;
+        }
+
+        window.open(loginUrl, '_blank', 'noopener,noreferrer');
+        setShowSessionImport(s => ({ ...s, [service]: true }));
+        setMessages(m => ({
+            ...m,
+            [service]: {
+                type: 'info',
+                text: 'Connectez-vous a Ubersuggest dans l’onglet ouvert avec votre compte Google, puis collez ici le JSON de cookies Ubersuggest pour enregistrer la session.'
+            }
+        }));
+    };
+
+    const saveSession = async (service) => {
+        const rawValue = sessionInputs[service];
+        if (!rawValue?.trim()) {
+            setMessages(m => ({ ...m, [service]: { type: 'error', text: 'Collez le JSON de cookies avant de valider la session.' } }));
+            return;
+        }
+
+        let cookies;
+        try {
+            const parsed = JSON.parse(rawValue);
+            if (Array.isArray(parsed)) {
+                cookies = parsed;
+            } else if (Array.isArray(parsed?.cookies)) {
+                cookies = parsed.cookies;
+            } else {
+                throw new Error('invalid_format');
+            }
+        } catch {
+            setMessages(m => ({
+                ...m,
+                [service]: {
+                    type: 'error',
+                    text: 'Format invalide. Collez soit un tableau JSON de cookies, soit un objet contenant une cle "cookies".'
+                }
+            }));
+            return;
+        }
+
+        setImportingSessions(s => ({ ...s, [service]: true }));
+        setMessages(m => ({ ...m, [service]: null }));
+
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch(`/api/sessions/import/${service}`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'include',
+                body: JSON.stringify({ cookies })
+            });
+
+            const data = await res.json();
+            if (res.ok) {
+                setMessages(m => ({
+                    ...m,
+                    [service]: {
+                        type: 'success',
+                        text: service === 'ubersuggest'
+                            ? 'Session Ubersuggest via Google enregistree et chiffree.'
+                            : data.message
+                    }
+                }));
+                setSessionInputs(s => ({ ...s, [service]: '' }));
+                setShowSessionImport(s => ({ ...s, [service]: false }));
+                fetchStatus();
+            } else {
+                setMessages(m => ({ ...m, [service]: { type: 'error', text: data.error || 'Impossible d’enregistrer la session.' } }));
+            }
+        } catch {
+            setMessages(m => ({ ...m, [service]: { type: 'error', text: 'Erreur reseau' } }));
+        } finally {
+            setImportingSessions(s => ({ ...s, [service]: false }));
         }
     };
 
@@ -227,11 +336,7 @@ const Settings = () => {
                 )}
 
                 {msg && (
-                    <div className={`mt-3 text-xs px-3 py-2 rounded-lg ${
-                        msg.type === 'success'
-                            ? 'bg-green-500/10 text-green-500 border border-green-500/20'
-                            : 'bg-red-500/10 text-red-400 border border-red-500/20'
-                    }`}>
+                    <div className={`mt-3 text-xs px-3 py-2 rounded-lg ${getMessageClasses(msg.type)}`}>
                         {msg.text}
                     </div>
                 )}
@@ -240,14 +345,21 @@ const Settings = () => {
     };
 
     // ── Credential Card (MRM, Ubersuggest) ──
-    const CredentialCard = ({ service, title, icon: Icon, loginUrl, description }) => {
+    const CredentialCard = ({ service, title, icon: Icon, loginUrl, description, allowGoogleSession = false }) => {
         const status = getServiceStatus(service);
         const isConnected = status?.status === 'active';
-        const isLegacy = status?.legacy;
+        const isLegacy = Boolean(status?.legacy);
+        const isPasswordAuth = status?.auth_type === 'password';
+        const isSessionAuth = status?.auth_type === 'session' || status?.auth_type === 'cookie';
+        const usesGoogleSession = service === 'ubersuggest' && status?.auth_type === 'session';
+        const googleConnected = getServiceStatus('google')?.status === 'active';
         const msg = messages[service];
         const isSaving = saving[service];
         const isTesting = testing[service];
+        const isImportingSession = importingSessions[service];
         const input = credentialInputs[service];
+        const sessionInput = sessionInputs[service] || '';
+        const showGoogleSessionForm = showSessionImport[service];
         const showPwd = showPassword[service];
 
         return (
@@ -265,12 +377,12 @@ const Settings = () => {
                     </div>
                     {isConnected && (
                         <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                            isLegacy
+                            (isLegacy || isSessionAuth)
                                 ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
                                 : 'bg-green-500/10 text-green-500 border border-green-500/20'
                         }`}>
                             <CheckCircle2 className="w-3 h-3" />
-                            {isLegacy ? 'Cookies (ancien)' : 'Connecté'}
+                            {usesGoogleSession ? 'Session Google' : isLegacy ? 'Cookies (ancien)' : 'Connecte'}
                         </div>
                     )}
                 </div>
@@ -281,7 +393,9 @@ const Settings = () => {
                         <div className="flex items-center gap-2">
                             <Zap className="w-3.5 h-3.5 text-green-500" />
                             <span className="text-xs text-green-600">
-                                {isLegacy
+                                {usesGoogleSession
+                                    ? `Session Google enregistree le ${new Date(status.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}`
+                                    : isLegacy
                                     ? 'Cookies importés (ancien système)'
                                     : `Configuré le ${new Date(status.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}`
                                 }
@@ -290,9 +404,9 @@ const Settings = () => {
                         <div className="flex items-center gap-2">
                             <button
                                 onClick={() => testCredentials(service)}
-                                disabled={isTesting || isLegacy}
+                                disabled={isTesting || !isPasswordAuth}
                                 className="text-blue-500 hover:text-blue-400 transition-colors disabled:opacity-40"
-                                title="Tester la connexion"
+                                title={isPasswordAuth ? 'Tester la connexion' : 'Test disponible uniquement pour le mode email / mot de passe'}
                             >
                                 <RefreshCw className={`w-3.5 h-3.5 ${isTesting ? 'animate-spin' : ''}`} />
                             </button>
@@ -312,7 +426,10 @@ const Settings = () => {
                     <div className="flex items-center gap-2 text-xs text-slate-500">
                         <Lock className="w-3.5 h-3.5" />
                         <span>
-                            Entrez vos identifiants <a href={loginUrl} target="_blank" rel="noopener" className="text-blue-500 hover:underline">{title}</a> — connexion automatique à chaque audit
+                            {allowGoogleSession
+                                ? <>Entrez vos identifiants <a href={loginUrl} target="_blank" rel="noopener" className="text-blue-500 hover:underline">{title}</a> ou utilisez le parcours Google ci-dessous pour enregistrer une session web reutilisable.</>
+                                : <>Entrez vos identifiants <a href={loginUrl} target="_blank" rel="noopener" className="text-blue-500 hover:underline">{title}</a> — connexion automatique à chaque audit</>
+                            }
                         </span>
                     </div>
 
@@ -341,25 +458,80 @@ const Settings = () => {
                         </button>
                     </div>
 
-                    <button
-                        onClick={() => saveCredentials(service)}
-                        disabled={isSaving || !input.email?.trim() || !input.password?.trim()}
-                        className="w-full py-2.5 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-blue-200/80"
-                    >
-                        {isSaving ? (
-                            <>Enregistrement...</>
-                        ) : (
-                            <><Save className="w-4 h-4" /> Enregistrer les identifiants</>
+                    <div className={`grid gap-3 ${allowGoogleSession ? 'sm:grid-cols-2' : 'grid-cols-1'}`}>
+                        <button
+                            onClick={() => saveCredentials(service)}
+                            disabled={isSaving || !input.email?.trim() || !input.password?.trim()}
+                            className="w-full py-2.5 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-blue-200/80"
+                        >
+                            {isSaving ? (
+                                <>Enregistrement...</>
+                            ) : (
+                                <><Save className="w-4 h-4" /> Enregistrer les identifiants</>
+                            )}
+                        </button>
+
+                        {allowGoogleSession && (
+                            <button
+                                type="button"
+                                onClick={() => beginGoogleSessionConnect(service, loginUrl)}
+                                disabled={!googleConnected}
+                                className="w-full py-2.5 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 border border-slate-200 bg-white text-slate-700 hover:border-blue-200 hover:text-blue-600 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                                title={googleConnected ? 'Ouvrir la connexion Ubersuggest via Google' : 'Connectez d’abord Google Search Console'}
+                            >
+                                <Globe className="w-4 h-4" />
+                                Via Google
+                            </button>
                         )}
-                    </button>
+                    </div>
+
+                    {allowGoogleSession && (
+                        <div className="rounded-xl border border-blue-100 bg-blue-50/70 p-4 space-y-3">
+                            <div className="space-y-1">
+                                <p className="text-sm font-semibold text-slate-900">Connexion Ubersuggest via Google</p>
+                                <p className="text-xs text-slate-600">
+                                    Utilisez le meme compte Google que celui connecte pour GSC. Une fois connecte sur Ubersuggest, exportez les cookies du domaine depuis votre navigateur puis collez le JSON ci-dessous.
+                                </p>
+                            </div>
+
+                            <div className="rounded-lg border border-blue-100 bg-white/80 px-3 py-2 text-xs text-slate-600">
+                                1. Cliquez sur <strong>Via Google</strong>.
+                                <br />
+                                2. Connectez-vous a Ubersuggest avec votre compte Google.
+                                <br />
+                                3. Exportez les cookies Ubersuggest au format JSON et collez-les ici pour enregistrer la session.
+                            </div>
+
+                            {showGoogleSessionForm && (
+                                <>
+                                    <textarea
+                                        rows={7}
+                                        value={sessionInput}
+                                        onChange={(e) => setSessionInputs(s => ({ ...s, [service]: e.target.value }))}
+                                        className="w-full rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-400 shadow-sm"
+                                        placeholder='Collez ici le JSON de cookies Ubersuggest'
+                                    />
+
+                                    <button
+                                        type="button"
+                                        onClick={() => saveSession(service)}
+                                        disabled={isImportingSession || !sessionInput.trim()}
+                                        className="w-full py-2.5 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    >
+                                        {isImportingSession ? (
+                                            <><RefreshCw className="w-4 h-4 animate-spin" /> Enregistrement de la session...</>
+                                        ) : (
+                                            <><Save className="w-4 h-4" /> Enregistrer la session Google</>
+                                        )}
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                    )}
 
                     {/* Message */}
                     {msg && (
-                        <div className={`text-xs px-3 py-2 rounded-lg ${
-                            msg.type === 'success'
-                                ? 'bg-green-500/10 text-green-500 border border-green-500/20'
-                                : 'bg-red-500/10 text-red-400 border border-red-500/20'
-                        }`}>
+                        <div className={`text-xs px-3 py-2 rounded-lg ${getMessageClasses(msg.type)}`}>
                             {msg.text}
                         </div>
                     )}
@@ -390,7 +562,8 @@ const Settings = () => {
                         <h4 className="font-semibold text-slate-900">Connexion automatique</h4>
                         <p className="text-sm text-slate-600 leading-relaxed">
                             Vos identifiants sont chiffrés en <strong>AES-256</strong> avant stockage.
-                            La plateforme se connecte automatiquement aux services avant chaque audit — plus besoin d'exporter vos cookies manuellement.
+                            La plateforme se connecte automatiquement aux services avant chaque audit.
+                            Ubersuggest peut aussi etre relie proprement via une session Google enregistree quand le mot de passe n’est pas le bon mode de connexion.
                         </p>
                     </div>
                 </div>
@@ -416,6 +589,7 @@ const Settings = () => {
                     icon={Lock}
                     loginUrl="https://app.neilpatel.com/en/login"
                     description="Autorité de domaine"
+                    allowGoogleSession
                 />
             </div>
         </div>
