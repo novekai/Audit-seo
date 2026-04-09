@@ -62,6 +62,49 @@ function dateDaysAgo(days) {
     return d.toISOString().split('T')[0];
 }
 
+function buildGoogleDomainAccessMessage(domain) {
+    return `Le compte Google connecté n'est pas relié au domaine ${domain} dans Google Search Console. Connectez le bon compte Google ou ajoutez ce compte à la propriété, puis relancez l'audit.`;
+}
+
+function buildGoogleReconnectMessage() {
+    return "Le compte Google n'est plus connecté à l'application. Reconnectez le bon compte Google dans les paramètres, puis relancez l'audit.";
+}
+
+function extractGscErrorMessage(error) {
+    const nestedMessages = error?.response?.data?.error?.errors
+        ?.map((entry) => entry?.message)
+        ?.filter(Boolean) || [];
+
+    return [
+        error?.message,
+        error?.response?.data?.error?.message,
+        ...nestedMessages
+    ]
+        .filter(Boolean)
+        .join(' | ')
+        .trim();
+}
+
+function normalizeGscError(error, domain) {
+    const rawMessage = extractGscErrorMessage(error);
+    const normalized = rawMessage.toLowerCase();
+
+    if (
+        !rawMessage ||
+        /no google refresh token available|invalid_grant|invalid credentials|login required|unauthorized|auth/i.test(normalized)
+    ) {
+        return buildGoogleReconnectMessage();
+    }
+
+    if (
+        /user does not have sufficient permission for site|sufficient permission|insufficient permission|permission for site|permission denied|access denied|forbidden|not a verified owner|don't have access to this property|dont have access to this property/i.test(normalized)
+    ) {
+        return buildGoogleDomainAccessMessage(domain);
+    }
+
+    return `Impossible de récupérer les données Google Search Console pour le domaine ${domain}. Vérifiez que le bon compte Google est connecté et qu'il a bien accès à cette propriété, puis relancez l'audit.`;
+}
+
 // -- Resolve site URL for API (try https:// and sc-domain:) ------------------
 async function resolveSiteUrl(wm, domain) {
     const candidates = [
@@ -88,11 +131,13 @@ async function resolveSiteUrl(wm, domain) {
                 return site;
             }
         }
-    } catch (e) {
-        console.warn(`[GSC-API] sites.list failed: ${e.message}`);
-    }
 
-    return candidates[0]; // fallback
+        throw new Error(buildGoogleDomainAccessMessage(domain));
+    } catch (e) {
+        const userMessage = normalizeGscError(e, domain);
+        console.warn(`[GSC-API] sites.list failed: ${extractGscErrorMessage(e) || userMessage}`);
+        throw new Error(userMessage);
+    }
 }
 
 // -- HTML rendering + screenshot ---------------------------------------------
@@ -360,8 +405,8 @@ export async function captureGscSitemapsAPI(siteUrl, auditId, refreshToken) {
         result.capture = await renderAndUpload(html, `audit-results/gsc-sitemaps-${auditId}`);
         result.statut = 'SUCCESS';
     } catch (e) {
-        result.details = e.message;
-        console.error('[GSC-API] Sitemaps error:', e.message);
+        result.details = normalizeGscError(e, new URL(siteUrl).hostname);
+        console.error('[GSC-API] Sitemaps error:', extractGscErrorMessage(e) || result.details);
     }
     return result;
 }
@@ -415,8 +460,8 @@ export async function captureGscHttpsAPI(siteUrl, auditId, refreshToken) {
         result.capture = await renderAndUpload(html, `audit-results/gsc-https-${auditId}`);
         result.statut = 'SUCCESS';
     } catch (e) {
-        result.details = e.message;
-        console.error('[GSC-API] HTTPS error:', e.message);
+        result.details = normalizeGscError(e, new URL(siteUrl).hostname);
+        console.error('[GSC-API] HTTPS error:', extractGscErrorMessage(e) || result.details);
     }
     return result;
 }
@@ -512,8 +557,8 @@ export async function captureGscPerformanceAPI(siteUrl, auditId, refreshToken) {
 
         result.statut = 'SUCCESS';
     } catch (e) {
-        result.details = e.message;
-        console.error('[GSC-API] Performance error:', e.message);
+        result.details = normalizeGscError(e, new URL(siteUrl).hostname);
+        console.error('[GSC-API] Performance error:', extractGscErrorMessage(e) || result.details);
     }
     return result;
 }
@@ -612,8 +657,8 @@ export async function captureGscCoverageAPI(siteUrl, auditId, refreshToken) {
 
         result.statut = 'SUCCESS';
     } catch (e) {
-        result.details = e.message;
-        console.error('[GSC-API] Coverage error:', e.message);
+        result.details = normalizeGscError(e, new URL(siteUrl).hostname);
+        console.error('[GSC-API] Coverage error:', extractGscErrorMessage(e) || result.details);
     }
     return result;
 }
@@ -681,8 +726,8 @@ export async function captureGscTopPagesAPI(siteUrl, auditId, refreshToken) {
         result.capture = await renderAndUpload(html, `audit-results/gsc-top-pages-${auditId}`);
         result.statut = 'SUCCESS';
     } catch (e) {
-        result.details = e.message;
-        console.error('[GSC-API] Top Pages error:', e.message);
+        result.details = normalizeGscError(e, new URL(siteUrl).hostname);
+        console.error('[GSC-API] Top Pages error:', extractGscErrorMessage(e) || result.details);
     }
     return result;
 }

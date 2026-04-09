@@ -100,6 +100,15 @@ async function gotoGscPage(page, url, label) {
     });
 }
 
+function buildGoogleDomainAccessMessage(domain, accountEmail = null) {
+    const accountSuffix = accountEmail ? ` Le compte actuellement utilisé est ${accountEmail}.` : '';
+    return `Le compte Google connecté n'est pas relié au domaine ${domain} dans Google Search Console.${accountSuffix} Connectez le bon compte Google ou ajoutez ce compte à la propriété, puis relancez l'audit.`;
+}
+
+function buildGoogleReconnectMessage() {
+    return "Le compte Google n'est plus connecté à l'application. Reconnectez le bon compte Google dans les paramètres, puis relancez l'audit.";
+}
+
 /**
  * ── HELPER: Resolve Property ID ──────────────────────────────────────────────
  * Detects if the property is URL-prefix (https://domain/) or Domain (sc-domain:domain).
@@ -144,7 +153,7 @@ export async function captureGscSitemaps(siteUrl, auditId, googleCookies) {
         console.log(`[GSC] Current URL after navigation: ${currentUrl}`);
         if (currentUrl.includes('accounts.google.com') || currentUrl.includes('signin')) {
             result.statut = 'SKIP';
-            result.details = 'Session Google expirée ou invalide (redirigé vers login)';
+            result.details = buildGoogleReconnectMessage();
             console.error(`[GSC] ❌ Session expired — redirected to: ${currentUrl}`);
             return result;
         }
@@ -156,7 +165,7 @@ export async function captureGscSitemaps(siteUrl, auditId, googleCookies) {
         if (missingAccess > 0) {
             const accountEmail = await page.locator('[aria-label*="@gmail.com"], [class*="profile"] text').first().innerText().catch(() => 'inconnu');
             result.statut = 'SKIP';
-            result.details = `Accès GSC refusé : Le compte Google (${accountEmail.trim()}) n'a pas accès à la propriété ${domain}.`;
+            result.details = buildGoogleDomainAccessMessage(domain, accountEmail.trim());
             console.error(`[GSC] ❌ Access denied for property ${domain} (Account: ${accountEmail})`);
             return result;
         }
@@ -197,7 +206,7 @@ export async function captureGscHttps(siteUrl, auditId, googleCookies) {
 
         if (page.url().includes('accounts.google.com')) {
             result.statut = 'SKIP';
-            result.details = 'Session Google expirée ou invalide';
+            result.details = buildGoogleReconnectMessage();
             return result;
         }
 
@@ -207,7 +216,7 @@ export async function captureGscHttps(siteUrl, auditId, googleCookies) {
         const missingAccess = await page.locator('text=/.*don\'t have access to this property.*/i').count();
         if (missingAccess > 0) {
             result.statut = 'SKIP';
-            result.details = `Accès refusé : Le compte Google utilisé n'a pas accès à la propriété ${domain} dans Search Console.`;
+            result.details = buildGoogleDomainAccessMessage(domain);
             return result;
         }
 
@@ -255,7 +264,7 @@ export async function captureGscPerformance(siteUrl, auditId, googleCookies) {
 
         if (page.url().includes('accounts.google.com')) {
             result.statut = 'SKIP';
-            result.details = 'Session Google expirée ou invalide';
+            result.details = buildGoogleReconnectMessage();
             return result;
         }
         await page.waitForTimeout(5000);
@@ -264,7 +273,7 @@ export async function captureGscPerformance(siteUrl, auditId, googleCookies) {
         const missingAccess = await page.locator('text=/.*don\'t have access to this property.*/i').count();
         if (missingAccess > 0) {
             result.statut = 'SKIP';
-            result.details = `Accès refusé : Le compte Google utilisé n'a pas accès à la propriété ${domain} dans Search Console.`;
+            result.details = buildGoogleDomainAccessMessage(domain);
             return result;
         }
 
@@ -363,7 +372,7 @@ export async function captureGscCoverage(siteUrl, auditId, googleCookies) {
 
         if (page.url().includes('accounts.google.com')) {
             result.statut = 'SKIP';
-            result.details = 'Session Google expirée';
+            result.details = buildGoogleReconnectMessage();
             return result;
         }
         await page.waitForTimeout(5000);
@@ -372,7 +381,7 @@ export async function captureGscCoverage(siteUrl, auditId, googleCookies) {
         const missingAccess = await page.locator('text=/.*don\'t have access to this property.*/i').count();
         if (missingAccess > 0) {
             result.statut = 'SKIP';
-            result.details = `Accès refusé : Le compte Google utilisé n'a pas accès à la propriété ${domain} dans Search Console.`;
+            result.details = buildGoogleDomainAccessMessage(domain);
             return result;
         }
 
@@ -453,7 +462,7 @@ export async function captureGscTopPages(siteUrl, auditId, googleCookies) {
 
         if (page.url().includes('accounts.google.com')) {
             result.statut = 'SKIP';
-            result.details = 'Session Google expirée';
+            result.details = buildGoogleReconnectMessage();
             return result;
         }
         await page.waitForTimeout(5000);
@@ -462,7 +471,7 @@ export async function captureGscTopPages(siteUrl, auditId, googleCookies) {
         const missingAccess = await page.locator('text=/.*don\'t have access to this property.*/i').count();
         if (missingAccess > 0) {
             result.statut = 'SKIP';
-            result.details = `Accès refusé : Le compte Google utilisé n'a pas accès à la propriété ${domain} dans Search Console.`;
+            result.details = buildGoogleDomainAccessMessage(domain);
             return result;
         }
 

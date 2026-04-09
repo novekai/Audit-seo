@@ -146,8 +146,11 @@ function simplifyReason(message) {
     const text = String(message || '').trim();
     if (!text) return '';
 
-    if (/session google/i.test(text) || /redirigé vers login/i.test(text)) {
-        return 'Connexion Google expirée';
+    if (/compte google n'est plus connecté|session google/i.test(text) || /redirigé vers login/i.test(text)) {
+        return 'Compte Google non connecté — reconnectez le bon compte dans les paramètres';
+    }
+    if (/compte google connecté n'est pas relié au domaine|n'a pas accès à la propriété .*search console|n'a pas accès à la propriété/i.test(text)) {
+        return "Le compte Google connecté n'est pas relié au domaine audité — liez le bon compte Google";
     }
     if (/onglet vide/i.test(text)) {
         return "L'onglet existe mais ne contient aucune donnée";
