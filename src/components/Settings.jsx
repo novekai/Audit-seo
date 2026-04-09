@@ -438,11 +438,7 @@ const Settings = () => {
                                     <p className="mt-1 text-sm leading-6 text-slate-600">{description}</p>
                                 </div>
                             </div>
-                            <div className="flex flex-wrap gap-2">
-                                <span className="rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-700">Chiffrement AES-256</span>
-                                <span className="rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-700">Connexion auto</span>
-                                {allowGoogleSession && <span className="rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-700">Mode Google</span>}
-                            </div>
+
                         </div>
                         <div className="flex flex-wrap items-center gap-3">
                             <StatusBadge active={isConnected} label={isConnected ? (isSessionAuth ? 'Session prete' : 'Connexion prete') : 'A configurer'} />
@@ -459,10 +455,6 @@ const Settings = () => {
                                 </div>
                             </div>
                             <div className="flex flex-wrap gap-2">
-                                <button type="button" onClick={() => testCredentials(service)} disabled={testing[service] || !isPasswordAuth} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition-all hover:border-sky-200 hover:text-sky-700 disabled:opacity-40">
-                                    <RefreshCw className={`h-4 w-4 ${testing[service] ? 'animate-spin' : ''}`} />
-                                    {testing[service] ? 'Test...' : 'Tester'}
-                                </button>
                                 <button type="button" onClick={() => deleteCredentials(service)} className="inline-flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-600 transition-all hover:bg-rose-100">
                                     <Trash2 className="h-4 w-4" />
                                     Supprimer
@@ -542,15 +534,9 @@ const Settings = () => {
                             <h1 className="settings-display max-w-3xl text-3xl font-black tracking-tight text-slate-900 lg:text-[2.6rem] lg:leading-[1.05]">
                                 Connecter les bons comptes sans friction ni hesitation
                             </h1>
-                            <p className="max-w-2xl text-base leading-7 text-slate-600">
-                                Tout est organise pour qu un utilisateur comprenne vite quoi faire, dans quel ordre, et avec un retour clair a chaque action.
-                            </p>
+                          
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                            <span className="rounded-full border border-sky-200 bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-700">Parcours guide</span>
-                            <span className="rounded-full border border-sky-200 bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-700">Feedback visible</span>
-                            <span className="rounded-full border border-sky-200 bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-700">Prise en main rapide</span>
-                        </div>
+                       
                     </div>
 
                     <div className="grid gap-4 sm:grid-cols-2">
@@ -592,16 +578,15 @@ const Settings = () => {
                 <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
                     <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">Parcours recommande</p>
-                        <h2 className="settings-display mt-2 text-2xl font-black text-slate-900">Un ordre simple pour ne jamais bloquer l utilisateur</h2>
                     </div>
                     <p className="max-w-2xl text-sm leading-6 text-slate-600">
                         Google d abord, puis MRM, puis Ubersuggest avec le mode le plus propre pour le compte utilise.
                     </p>
                 </div>
                 <div className="grid gap-4 xl:grid-cols-3">
-                    <div className="settings-card group rounded-[28px] p-5 transition-all duration-300 hover:-translate-y-1"><div className="flex items-start justify-between gap-4"><div className="flex items-start gap-4"><div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border text-lg font-black ${googleConnected ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-sky-200 bg-sky-50 text-sky-700'}`}>1</div><div><h3 className="settings-display text-lg font-black text-slate-900">Connecter Google</h3><p className="mt-2 text-sm leading-6 text-slate-600">Le compte doit avoir acces a la Search Console et aux Google Sheets relies a l audit.</p></div></div><StatusBadge active={googleConnected} label={googleConnected ? 'Pret' : 'A faire'} /></div><div className="mt-5 flex items-center justify-between rounded-2xl border border-slate-200/80 bg-slate-50/85 px-4 py-3 text-sm text-slate-600"><span>Base critique du parcours.</span><ArrowRight className="h-4 w-4 text-slate-400 transition-transform duration-300 group-hover:translate-x-1" /></div></div>
-                    <div className="settings-card group rounded-[28px] p-5 transition-all duration-300 hover:-translate-y-1"><div className="flex items-start justify-between gap-4"><div className="flex items-start gap-4"><div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border text-lg font-black ${mrmConnected ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-sky-200 bg-sky-50 text-sky-700'}`}>2</div><div><h3 className="settings-display text-lg font-black text-slate-900">Configurer MRM</h3><p className="mt-2 text-sm leading-6 text-slate-600">Ajoutez une connexion stable pour les donnees MRM et la profondeur de clics.</p></div></div><StatusBadge active={mrmConnected} label={mrmConnected ? 'Pret' : 'A faire'} /></div><div className="mt-5 flex items-center justify-between rounded-2xl border border-slate-200/80 bg-slate-50/85 px-4 py-3 text-sm text-slate-600"><span>Un enregistrement suffit.</span><ArrowRight className="h-4 w-4 text-slate-400 transition-transform duration-300 group-hover:translate-x-1" /></div></div>
-                    <div className="settings-card group rounded-[28px] p-5 transition-all duration-300 hover:-translate-y-1"><div className="flex items-start justify-between gap-4"><div className="flex items-start gap-4"><div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border text-lg font-black ${ubersuggestConnected ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-sky-200 bg-sky-50 text-sky-700'}`}>3</div><div><h3 className="settings-display text-lg font-black text-slate-900">Choisir Ubersuggest</h3><p className="mt-2 text-sm leading-6 text-slate-600">Utilisez des identifiants classiques ou le parcours Google selon votre mode reel d acces.</p></div></div><StatusBadge active={ubersuggestConnected} label={ubersuggestConnected ? 'Pret' : 'A faire'} /></div><div className="mt-5 flex items-center justify-between rounded-2xl border border-slate-200/80 bg-slate-50/85 px-4 py-3 text-sm text-slate-600"><span>Choix simple, sans ambiguite.</span><ArrowRight className="h-4 w-4 text-slate-400 transition-transform duration-300 group-hover:translate-x-1" /></div></div>
+                    <div className="settings-card group rounded-[28px] p-5 transition-all duration-300 hover:-translate-y-1"><div className="flex items-start justify-between gap-4"><div className="flex items-start gap-4"><div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border text-lg font-black ${googleConnected ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-sky-200 bg-sky-50 text-sky-700'}`}>1</div><div><h3 className="settings-display text-lg font-black text-slate-900">Connecter Google</h3><p className="mt-2 text-sm leading-6 text-slate-600">Le compte doit avoir acces a la Search Console et aux Google Sheets relies a l audit.</p></div></div><StatusBadge active={googleConnected} label={googleConnected ? 'Pret' : 'A faire'} /></div></div>
+                    <div className="settings-card group rounded-[28px] p-5 transition-all duration-300 hover:-translate-y-1"><div className="flex items-start justify-between gap-4"><div className="flex items-start gap-4"><div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border text-lg font-black ${mrmConnected ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-sky-200 bg-sky-50 text-sky-700'}`}>2</div><div><h3 className="settings-display text-lg font-black text-slate-900">Configurer MRM</h3><p className="mt-2 text-sm leading-6 text-slate-600">Ajoutez une connexion stable pour les donnees MRM et la profondeur de clics.</p></div></div><StatusBadge active={mrmConnected} label={mrmConnected ? 'Pret' : 'A faire'} /></div></div>
+                    <div className="settings-card group rounded-[28px] p-5 transition-all duration-300 hover:-translate-y-1"><div className="flex items-start justify-between gap-4"><div className="flex items-start gap-4"><div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border text-lg font-black ${ubersuggestConnected ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-sky-200 bg-sky-50 text-sky-700'}`}>3</div><div><h3 className="settings-display text-lg font-black text-slate-900">Choisir Ubersuggest</h3><p className="mt-2 text-sm leading-6 text-slate-600">Utilisez des identifiants classiques ou le parcours Google selon votre mode reel d acces.</p></div></div><StatusBadge active={ubersuggestConnected} label={ubersuggestConnected ? 'Pret' : 'A faire'} /></div></div>
                 </div>
             </section>
 
@@ -613,7 +598,7 @@ const Settings = () => {
                             <div>
                                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">Compte principal</p>
                                 <h2 className="settings-display mt-1 text-2xl font-black text-slate-900">Google Search Console</h2>
-                                <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">Ce compte pilote les donnees GSC et les captures Google Sheets. Commencer ici supprime la majorite des blocages.</p>
+                                <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">Ce compte pilote les donnees GSC et les captures Google Sheets. </p>
                             </div>
                         </div>
                         <div className="flex flex-wrap gap-2">
