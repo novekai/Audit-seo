@@ -31,7 +31,7 @@ const SUCCESS_STEP_STATUSES = new Set([
 
 const STEP_LABELS = {
     robots_txt: 'Fichier robots.txt',
-    sitemap: 'Plan du site',
+    sitemap: 'Capture du sitemap',
     logo: 'Logo',
     ami_responsive: 'Version responsive',
     responsive_menu_mobile_1: 'Menu mobile 1',
