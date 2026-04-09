@@ -516,67 +516,79 @@ function watchActionPlanLinkInAirtable(auditId, airtableRecordId) {
     return watcherPromise;
 }
 
-async function triggerGoogleSlidesWebhook(recordId) {
+async function triggerGoogleSlidesWebhook(recordId, maxRetries = 3) {
     const webhookCandidates = buildSlidesWebhookCandidates(recordId);
     let lastError = null;
 
     for (const webhookUrl of webhookCandidates) {
-        console.log(`[SLIDES] Calling webhook: ${webhookUrl.toString()}`);
-        const response = await fetch(webhookUrl, {
-            method: 'GET',
-            signal: AbortSignal.timeout(120000)
-        });
-        console.log(`[SLIDES] Webhook response status: ${response.status}`);
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            console.log(`[SLIDES] Calling webhook (attempt ${attempt}/${maxRetries}): ${webhookUrl.toString()}`);
+            const response = await fetch(webhookUrl, {
+                method: 'GET',
+                signal: AbortSignal.timeout(120000)
+            });
+            console.log(`[SLIDES] Webhook response status: ${response.status}`);
 
-        const rawText = await response.text();
-        let payload = rawText;
+            const rawText = await response.text();
+            let payload = rawText;
 
-        if (rawText) {
-            try {
-                payload = JSON.parse(rawText);
-            } catch { }
-        }
-
-        const googleSlidesUrl =
-            extractGoogleSlidesUrl(payload) ||
-            extractGoogleSlidesUrl(rawText) ||
-            extractGoogleSlidesUrl(response.url);
-
-        if (!response.ok) {
-            lastError = new Error(
-                extractSlidesErrorMessage(payload) ||
-                summarizeSlidesMessage(rawText) ||
-                `Le webhook Slides a répondu avec le statut ${response.status}.`
-            );
-
-            const canFallbackToProduction =
-                response.status === 404 &&
-                webhookUrl.pathname.includes('/webhook-test/');
-
-            if (canFallbackToProduction) {
-                continue;
+            if (rawText) {
+                try {
+                    payload = JSON.parse(rawText);
+                } catch { }
             }
 
-            throw lastError;
-        }
+            const googleSlidesUrl =
+                extractGoogleSlidesUrl(payload) ||
+                extractGoogleSlidesUrl(rawText) ||
+                extractGoogleSlidesUrl(response.url);
 
-        if (googleSlidesUrl) {
+            if (!response.ok) {
+                lastError = new Error(
+                    extractSlidesErrorMessage(payload) ||
+                    summarizeSlidesMessage(rawText) ||
+                    `Le webhook Slides a répondu avec le statut ${response.status}.`
+                );
+
+                const canFallbackToProduction =
+                    response.status === 404 &&
+                    webhookUrl.pathname.includes('/webhook-test/');
+
+                if (canFallbackToProduction) {
+                    break; // try next candidate
+                }
+
+                // Retry on transient errors (503, 502, "not ready", cold start)
+                const isTransient = response.status === 503 || response.status === 502 ||
+                    /not ready|loading|starting|initializ/i.test(rawText);
+                if (isTransient && attempt < maxRetries) {
+                    const delay = attempt * 5000;
+                    console.warn(`[SLIDES] Transient error, retrying in ${delay}ms...`);
+                    await new Promise(r => setTimeout(r, delay));
+                    continue;
+                }
+
+                throw lastError;
+            }
+
+            if (googleSlidesUrl) {
+                return {
+                    googleSlidesUrl,
+                    webhookUrl: webhookUrl.toString(),
+                    asynchronous: false,
+                    message: 'Google Slides généré avec succès'
+                };
+            }
+
             return {
-                googleSlidesUrl,
+                googleSlidesUrl: null,
                 webhookUrl: webhookUrl.toString(),
-                asynchronous: false,
-                message: 'Google Slides généré avec succès'
+                asynchronous: true,
+                message: buildSlidesAcceptedMessage(
+                    extractSlidesErrorMessage(payload) || rawText
+                )
             };
         }
-
-        return {
-            googleSlidesUrl: null,
-            webhookUrl: webhookUrl.toString(),
-            asynchronous: true,
-            message: buildSlidesAcceptedMessage(
-                extractSlidesErrorMessage(payload) || rawText
-            )
-        };
     }
 
     throw lastError || new Error('Impossible de contacter le webhook Google Slides.');

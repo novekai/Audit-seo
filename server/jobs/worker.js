@@ -583,7 +583,10 @@ export const initWorker = (io, db) => {
                         console.log(`[WORKER] [JOB ${job.id}] Executing Step: MRM...`);
                         const mrmRes = await runWithTimeout(captureMrmProfondeur(audit.mrm_report_url, auditId, mrmAuth), 240000, 'MRM');
                         await updateStep('mrm_profondeur', mrmRes.statut, mrmRes.details, mrmRes.capture);
-                        if (audit.airtable_record_id && mrmRes.capture) await updateAirtableField(audit.airtable_record_id, 'Img_profondeur_clics_mrm', mrmRes.capture);
+                        if (audit.airtable_record_id && mrmRes.capture) {
+                            try { await updateAirtableField(audit.airtable_record_id, 'Img_profondeur_clics_mrm', mrmRes.capture); } catch (e) { console.error(`[WORKER] Airtable sync failed for Img_profondeur_clics_mrm:`, e.message); }
+                            try { await updateAirtableField(audit.airtable_record_id, 'Img_profondeur_clics', mrmRes.capture); } catch (e) { console.error(`[WORKER] Airtable sync failed for Img_profondeur_clics:`, e.message); }
+                        }
                     }
                 }
             } catch (e) {
