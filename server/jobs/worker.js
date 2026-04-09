@@ -661,7 +661,7 @@ export const initWorker = (io, db) => {
                         const airtableGscPerfWrites = [
                             [gscPerfRes.capture1, 'Img_trafic actuel1'],
                             [gscPerfRes.capture2, 'Img_trafic actuel2'],
-                            [hasAirtableValue(gscPerfRes.clics) ? gscPerfRes.clics : null, 'nombres de clics trafic actuel'],
+                            [hasNumericValue(gscPerfRes.clics) ? Number(String(gscPerfRes.clics).replace(/[\s\u00A0.,]/g, '')) : null, 'nombres de clics trafic actuel'],
                             [gscPerfRes.capture2, 'Img_donnee_brute_gcs'],
                             [gscPerfRes.bestQueryCapture, 'Img_meilleure_requete'],
                             [gscPerfRes.queryPageClicksImpressionsCapture, 'Img_query_page_clicks_impressions'],
@@ -756,7 +756,7 @@ export const initWorker = (io, db) => {
                         const airtableGscPerfWrites2 = [
                             [gscPerfRes.capture1, 'Img_trafic actuel1'],
                             [gscPerfRes.capture2, 'Img_trafic actuel2'],
-                            [hasAirtableValue(gscPerfRes.clics) ? gscPerfRes.clics : null, 'nombres de clics trafic actuel'],
+                            [hasNumericValue(gscPerfRes.clics) ? Number(String(gscPerfRes.clics).replace(/[\s\u00A0.,]/g, '')) : null, 'nombres de clics trafic actuel'],
                             [gscPerfRes.capture2, 'Img_donnee_brute_gcs'],
                             [gscPerfRes.bestQueryCapture, 'Img_meilleure_requete'],
                             [gscPerfRes.queryPageClicksImpressionsCapture, 'Img_query_page_clicks_impressions'],
