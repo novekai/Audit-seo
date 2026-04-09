@@ -875,6 +875,27 @@ app.post('/api/credentials/:service', authenticateToken, async (req, res) => {
     }
 });
 
+app.delete('/api/connections/reset', authenticateToken, async (req, res) => {
+    const userId = req.user.userId;
+    if (!db) return res.status(503).json({ error: 'Base de données en cours de chargement' });
+
+    try {
+        await db.run('DELETE FROM service_credentials WHERE user_id = ?', [userId]);
+        await db.run('DELETE FROM user_sessions WHERE user_id = ?', [userId]);
+
+        console.log(`[CREDENTIALS] Reset all external connections for user ${userId}`);
+        res.json({
+            success: true,
+            message: 'Tous les comptes connectés ont été réinitialisés.'
+        });
+    } catch (err) {
+        console.error('[CREDENTIALS] Reset all error:', err);
+        res.status(500).json({
+            error: 'Erreur lors de la réinitialisation des comptes connectés'
+        });
+    }
+});
+
 app.delete('/api/credentials/:service', authenticateToken, async (req, res) => {
     const { service } = req.params;
     const userId = req.user.userId;

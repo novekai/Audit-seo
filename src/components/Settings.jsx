@@ -14,6 +14,7 @@ const Settings = () => {
     const [saving, setSaving] = useState({});
     const [testing, setTesting] = useState({});
     const [importingSessions, setImportingSessions] = useState({});
+    const [resettingConnections, setResettingConnections] = useState(false);
     const [showSessionImport, setShowSessionImport] = useState({ ubersuggest: false });
     const [messages, setMessages] = useState({});
 
@@ -64,6 +65,16 @@ const Settings = () => {
             return 'bg-blue-500/10 text-blue-600 border border-blue-500/20';
         }
         return 'bg-red-500/10 text-red-400 border border-red-500/20';
+    };
+
+    const resetLocalConnectionInputs = () => {
+        setCredentialInputs({
+            mrm: { email: '', password: '' },
+            ubersuggest: { email: '', password: '' }
+        });
+        setSessionInputs({ ubersuggest: '' });
+        setShowPassword({ mrm: false, ubersuggest: false });
+        setShowSessionImport({ ubersuggest: false });
     };
 
     const saveCredentials = async (service) => {
@@ -143,6 +154,50 @@ const Settings = () => {
             setMessages(m => ({ ...m, [service]: { type: 'error', text: 'Erreur réseau' } }));
         } finally {
             setTesting(t => ({ ...t, [service]: false }));
+        }
+    };
+
+    const resetConnectedAccounts = async () => {
+        const confirmed = window.confirm(
+            'Réinitialiser tous les comptes connectés ? Cela supprimera les connexions Google Search Console, MRM et Ubersuggest enregistrées pour cet administrateur.'
+        );
+
+        if (!confirmed) return;
+
+        setResettingConnections(true);
+        setMessages(m => ({ ...m, reset: null }));
+
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch('/api/connections/reset', {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` },
+                credentials: 'include'
+            });
+            const data = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                throw new Error(data.error || 'Impossible de réinitialiser les comptes connectés');
+            }
+
+            resetLocalConnectionInputs();
+            setMessages({
+                reset: {
+                    type: 'success',
+                    text: data.message || 'Tous les comptes connectés ont été réinitialisés.'
+                }
+            });
+            await fetchStatus();
+        } catch (err) {
+            setMessages(m => ({
+                ...m,
+                reset: {
+                    type: 'error',
+                    text: err.message || 'Impossible de réinitialiser les comptes connectés'
+                }
+            }));
+        } finally {
+            setResettingConnections(false);
         }
     };
 
@@ -542,15 +597,33 @@ const Settings = () => {
 
     return (
         <div className="max-w-5xl mx-auto space-y-8">
-            <div className="flex items-center gap-4 border-b border-slate-200 pb-6">
-                <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center border border-blue-100">
-                    <SettingsIcon className="w-6 h-6 text-blue-500" />
+            <div className="flex flex-col gap-4 border-b border-slate-200 pb-6 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center border border-blue-100">
+                        <SettingsIcon className="w-6 h-6 text-blue-500" />
+                    </div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-900">Connexions aux services</h1>
+                        <p className="text-slate-600">Configurez vos connexions pour activer les modules d'audit avancés</p>
+                    </div>
                 </div>
-                <div>
-                    <h1 className="text-2xl font-bold text-slate-900">Connexions aux services</h1>
-                    <p className="text-slate-600">Configurez vos connexions pour activer les modules d'audit avancés</p>
-                </div>
+
+                <button
+                    type="button"
+                    onClick={resetConnectedAccounts}
+                    disabled={resettingConnections}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-sm font-semibold text-rose-600 transition-all hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                    <RefreshCw className={`w-4 h-4 ${resettingConnections ? 'animate-spin' : ''}`} />
+                    {resettingConnections ? 'Réinitialisation...' : 'Reset des comptes connectés'}
+                </button>
             </div>
+
+            {messages.reset && (
+                <div className={`rounded-2xl px-4 py-3 text-sm ${getMessageClasses(messages.reset.type)}`}>
+                    {messages.reset.text}
+                </div>
+            )}
 
             {/* Info banner */}
             <div className="glass rounded-2xl p-6 border border-blue-100 bg-blue-50/60">
@@ -564,6 +637,9 @@ const Settings = () => {
                             Vos identifiants sont chiffrés en <strong>AES-256</strong> avant stockage.
                             La plateforme se connecte automatiquement aux services avant chaque audit.
                             Ubersuggest peut aussi etre relie proprement via une session Google enregistree quand le mot de passe n’est pas le bon mode de connexion.
+                        </p>
+                        <p className="text-xs text-slate-500">
+                            Le bouton de reset est utile avant de passer a l'audit d'un nouveau site ou quand l'administrateur doit repartir d'un environnement propre.
                         </p>
                     </div>
                 </div>
