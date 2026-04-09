@@ -501,7 +501,7 @@ export async function captureGscPerformanceAPI(siteUrl, auditId, refreshToken) {
         const avgCtr = summaryData.rows?.[0]?.ctr || 0;
         const avgPosition = summaryData.rows?.[0]?.position || 0;
 
-        result.clics = formatNumber(totalClicks);
+        result.clics = totalClicks;
 
         // -- Capture 1: Summary metrics cards --
         const metricsHtml = renderHtmlMetricCards({

@@ -333,7 +333,14 @@ export async function auditRobotsSitemap(url, auditId) {
 
     } catch (err) {
         console.error('[MODULE-ROBOTS] Global error:', err);
-        robotsResult.robots_txt.statut = 'ERROR';
+        if (robotsResult.robots_txt.statut !== 'SUCCESS') {
+            robotsResult.robots_txt.statut = 'ERROR';
+            robotsResult.robots_txt.details = robotsResult.robots_txt.details || err.message;
+        }
+        if (robotsResult.sitemap.statut !== 'SUCCESS') {
+            robotsResult.sitemap.statut = 'ERROR';
+            robotsResult.sitemap.details = robotsResult.sitemap.details || err.message;
+        }
     } finally {
         await browser.close();
     }
