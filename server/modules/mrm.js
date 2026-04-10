@@ -37,7 +37,7 @@ async function loginToMrm(page, email, password) {
     try {
         await page.goto('https://myrankingmetrics.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
     } catch (err) {
-        throw new Error(`[MRM] La page de login MRM est inaccessible (timeout ou erreur réseau): ${err.message}`);
+        throw new Error(`La connexion à My Ranking Metrics a échoué. Veuillez vous reconnecter et réessayer.`);
     }
     await page.waitForTimeout(2000);
 
