@@ -47,7 +47,8 @@ async function renderSitemapCapture(page, auditId, { title, subtitle, lines, ton
         ? lines
         : ['Aucune ligne exploitable disponible pour cette capture.'];
 
-    // Reset to a proper HTML page — the page may be showing an XML sitemap where document.body is null
+    // Navigate to blank HTML first — page.setContent fails on XML documents
+    await page.goto('about:blank');
     await page.setContent('<html><body></body></html>', { waitUntil: 'load' });
 
     const dimensions = await page.evaluate(({ title, subtitle, lines, footerNote, palette }) => {
