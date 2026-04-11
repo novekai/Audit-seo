@@ -176,11 +176,40 @@ async function openSheet(sheetUrl, googleCookies) {
     return { browser, context, page };
 }
 
+// ── Resize viewport to fit the full sheet content ──────────────────────────
+async function resizeViewportToFitContent(page) {
+    try {
+        const contentSize = await page.evaluate(() => {
+            const grid = document.querySelector('#waffle-grid-container');
+            if (grid) {
+                return {
+                    width: Math.max(grid.scrollWidth, grid.offsetWidth),
+                    height: Math.max(grid.scrollHeight, grid.offsetHeight)
+                };
+            }
+            return {
+                width: document.documentElement.scrollWidth,
+                height: document.documentElement.scrollHeight
+            };
+        });
+
+        const newWidth = Math.max(1600, contentSize.width + 100);
+        const newHeight = Math.max(900, contentSize.height + 100);
+
+        console.log(`[PLAN-CAPTURE] Resizing viewport to ${newWidth}x${newHeight} to fit sheet content (detected: ${contentSize.width}x${contentSize.height})`);
+        await page.setViewportSize({ width: newWidth, height: newHeight });
+        await page.waitForTimeout(2000);
+    } catch (e) {
+        console.warn(`[PLAN-CAPTURE] Could not resize viewport: ${e.message}, using default size`);
+    }
+}
+
 // ── Screenshot and upload ───────────────────────────────────────────────────
 async function captureAndUpload(page, promptText, cloudinaryFolder) {
     const tmpDir = process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
     const tmpPath = path.join(tmpDir, `temp_plan_${uuidv4()}.png`);
-    await page.screenshot({ path: tmpPath, fullPage: false });
+    await resizeViewportToFitContent(page);
+    await page.screenshot({ path: tmpPath, fullPage: true });
     const croppedPath = await cropWithAI(tmpPath, promptText);
     const result = await uploadToCloudinary(croppedPath, cloudinaryFolder);
     if (fs.existsSync(croppedPath)) fs.unlinkSync(croppedPath);
