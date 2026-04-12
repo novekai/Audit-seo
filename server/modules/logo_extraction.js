@@ -48,7 +48,7 @@ export async function extractLogo(siteUrl, auditId) {
         if (res.status === 200) {
             results.url = await uploadBufferToCloudinary(res.data, `logo-gg-${auditId}.png`, 'audit-results');
             results.statut = 'SUCCESS';
-            results.details = 'Logo extrait via Google Favicon API (Fallback)';
+            results.details = 'Logo extrait via Google Favicon API';
             console.log(`[MODULE-LOGO] Google Success: ${results.url}`);
             return results;
         }
@@ -97,7 +97,7 @@ export async function extractLogo(siteUrl, auditId) {
             const res = await axios.get(absoluteUrl, { responseType: 'arraybuffer', timeout: 10000 });
             results.url = await uploadBufferToCloudinary(res.data, `logo-sc-${auditId}.png`, 'audit-results');
             results.statut = 'SUCCESS';
-            results.details = 'Logo extrait via Scraping DOM (Fallback)';
+            results.details = 'Logo extrait via Scraping DOM';
             console.log(`[MODULE-LOGO] Scraper Success: ${results.url}`);
             return results;
         }

@@ -215,7 +215,7 @@ export async function auditResponsive(url, auditId) {
         } else {
             // Fallback to viewport screenshot
             await page.screenshot({ path: screenshotPath, fullPage: false });
-            console.log('[MODULE-RESPONSIVE] Captured full viewport (fallback)');
+            console.log('[MODULE-RESPONSIVE] Captured full viewport');
         }
 
         console.log('[MODULE-RESPONSIVE] Uploading to Cloudinary...');
