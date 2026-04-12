@@ -272,6 +272,40 @@ function trimEmptyColumns(values) {
     return rows.map((r) => r.slice(0, lastUsed + 1));
 }
 
+function padRow(row, width) {
+    return Array.from({ length: width }, (_, index) => String(row?.[index] ?? ""));
+}
+
+function countNonEmptyCells(row) {
+    return (row || []).filter((cell) => String(cell ?? "").trim() !== "").length;
+}
+
+function buildRawTableModel(values) {
+    const rows = values.filter((row) => row.some((cell) => String(cell ?? "").trim() !== ""));
+    if (rows.length === 0) return null;
+
+    const width = Math.max(1, ...rows.map((row) => row.length));
+    const firstRow = rows[0] || [];
+    const secondRow = rows[1] || [];
+    const hasMergedBanner =
+        rows.length >= 2 &&
+        countNonEmptyCells(firstRow) === 1 &&
+        countNonEmptyCells(secondRow) > 1;
+
+    if (hasMergedBanner) {
+        const bannerTitle = firstRow.find((cell) => String(cell ?? "").trim() !== "") || "";
+        return {
+            table: [padRow(secondRow, width), ...rows.slice(2).map((row) => padRow(row, width))],
+            bannerTitle
+        };
+    }
+
+    return {
+        table: rows.map((row) => padRow(row, width)),
+        bannerTitle: null
+    };
+}
+
 function applyWhere(cell, where) {
     const v = String(cell ?? "").trim();
     if (!where) return true;
@@ -334,9 +368,9 @@ function buildTable(values, cfg, { found = true, error = null } = {}) {
 
     // RAW = juste trimming colonnes + return
     if (cfg.mode === "raw") {
-        const rows = data.filter((r) => r.some((c) => String(c ?? "").trim() !== ""));
-        if (rows.length === 0) return { table: null, reason: "Aucune donnée" };
-        return { table: [header, ...rows] };
+        const rawTable = buildRawTableModel(trimmed);
+        if (!rawTable?.table?.length) return { table: null, reason: "Aucune donnée" };
+        return rawTable;
     }
 
     // TRANSFORM
@@ -372,9 +406,10 @@ function buildTable(values, cfg, { found = true, error = null } = {}) {
     return { table: [outHeader, ...projected] };
 }
 
-function renderHtmlTable({ title, table }) {
+function renderHtmlTable({ table, bannerTitle = null }) {
     const headers = table[0] || [];
     const rows = table.slice(1);
+    const sheetLike = Boolean(bannerTitle);
 
     const ths = headers
         .map((h) => `<th>${escapeHtml(String(h ?? ""))}</th>`)
@@ -409,27 +444,42 @@ function renderHtmlTable({ title, table }) {
     font-family: Arial, Helvetica, sans-serif;
     font-size: 11px;
   }
-  table { border-collapse: collapse; }
+  .sheet-banner {
+    background: #1f4e79;
+    color: #fff;
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 700;
+    text-align: center;
+    border: 1px solid #1f4e79;
+    border-bottom: 0;
+  }
+  table {
+    border-collapse: collapse;
+    table-layout: ${sheetLike ? "fixed" : "auto"};
+    width: ${sheetLike ? "1520px" : "auto"};
+  }
   thead th {
-    background: #f3f3f3;
+    background: ${sheetLike ? "#1f4e79" : "#f3f3f3"};
     border: 1px solid #e2e2e2;
     padding: 3px 8px;
     font-size: 11px;
     font-weight: 700;
-    color: #333;
+    color: ${sheetLike ? "#fff" : "#333"};
     text-align: left;
-    white-space: nowrap;
+    white-space: ${sheetLike ? "normal" : "nowrap"};
   }
   tbody td {
     border: 1px solid #e2e2e2;
-    padding: 2px 8px;
+    padding: ${sheetLike ? "6px 8px" : "2px 8px"};
     font-size: 11px;
     color: #333;
     vertical-align: top;
-    white-space: nowrap;
-    max-width: 700px;
+    white-space: ${sheetLike ? "normal" : "nowrap"};
+    max-width: ${sheetLike ? "320px" : "700px"};
     overflow: hidden;
     text-overflow: ellipsis;
+    line-height: ${sheetLike ? "1.35" : "1.2"};
   }
   tbody tr:nth-child(even) td { background: #f8f9fa; }
   tbody tr:nth-child(odd) td { background: #fff; }
@@ -437,6 +487,7 @@ function renderHtmlTable({ title, table }) {
 </head>
 <body>
   <div class="wrap" id="capture">
+    ${bannerTitle ? `<div class="sheet-banner">${escapeHtml(bannerTitle)}</div>` : ""}
     <table>
       <thead><tr>${ths}</tr></thead>
       <tbody>${trs}</tbody>
@@ -584,8 +635,8 @@ export async function auditGoogleSheetsAPI(sheetAuditUrl, sheetPlanUrl, auditId,
 
             console.log(`[SHEETS-API] Rendu HTML pour ${cfg.airtableField} (${cfg.tabName})`);
             const html = renderHtmlTable({
-                title: `${cfg.target.toUpperCase()} — ${cfg.tabName}`,
                 table: built.table,
+                bannerTitle: built.bannerTitle,
             });
 
             const tmpDir = process.env.RAILWAY_ENVIRONMENT ? "/tmp" : ".";
