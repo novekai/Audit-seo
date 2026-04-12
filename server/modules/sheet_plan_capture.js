@@ -1,16 +1,19 @@
 /**
  * sheet_plan_capture.js
- * Optimized Plan d'Action Google Sheets tabs capture.
- * Uses robust navigation and UI hiding logic provided by the user.
+ * Plan d'Action Google Sheets tabs capture.
+ * Captures each tab as a raw PNG and uploads it to Cloudinary.
  */
 import { chromium } from 'playwright';
-import sharp from 'sharp';
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { uploadToCloudinary } from '../utils/cloudinary.js';
-import { analyzeImage } from '../utils/openai.js';
 import { sanitizeCookies } from '../utils/cookies.js';
+
+// ── Large viewport so Google Sheets renders many columns/rows at once ────────
+// Google Sheets uses canvas-based virtual rendering, so we MUST open the browser
+// with a large viewport from the start — resizing later does not re-render the grid.
+const VIEWPORT = { width: 2560, height: 1600 };
 
 // ── CSS to hide Google Sheets UI chrome ──────────────────────────────────────
 const SHEETS_HIDE_CSS = `
@@ -19,20 +22,6 @@ const SHEETS_HIDE_CSS = `
   #docs-menubar, .docs-butterbar-container, .docs-offline-indicator,
   .docs-gm3-topbar, .notranslate[role="banner"] { display: none !important; }
 `;
-
-const SHEET_CROP_PROMPT = `Tu es un expert en rognage d'images.
-Cette image est une capture d'écran d'un Google Sheet.
-Tu DOIS rogner pour ne garder STRICTEMENT que le tableau de données visibles.
-
-RÈGLES STRICTES :
-1. Supprime TOUT en haut : barre de menus, barre d'outils, barre de formule, en-tête du document
-2. Supprime TOUT en bas : barre d'onglets, barre de défilement, pied de page
-3. Supprime TOUTES les marges vides à droite et en bas du tableau
-4. Supprime les colonnes de lettres (A, B, C...) et les numéros de lignes (1, 2, 3...)
-5. Le résultat doit être un tableau SERRÉ sans aucun espace vide autour
-6. NE COUPE AUCUNE donnée du tableau. Tu DOIS ABSOLUMENT CONSERVER la première ligne d'en-tête contenant les noms des colonnes (ex: URL, Destination, H1...). Ne la rogne surtout pas.
-
-Réponds UNIQUEMENT avec : CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
 
 // ── Plan d'action tabs mapping ────────────────────────────────────────────────
 const PLAN_TABS = [
@@ -57,29 +46,6 @@ const PLAN_TABS = [
         cloudinarySlug: "plan-longueur"
     },
 ];
-
-// ── AI crop helper ────────────────────────────────────────────────────────────
-async function cropWithAI(imagePath, prompt) {
-    try {
-        const response = await analyzeImage(imagePath, prompt);
-        const match = response.match(/CROP:\s*x=(\d+),\s*y=(\d+),\s*width=(\d+),\s*height=(\d+)/i);
-        if (!match) return imagePath;
-        const [, x, y, w, h] = match.map(Number);
-        const meta = await sharp(imagePath).metadata();
-        const left = Math.min(x, meta.width - 10);
-        const top = Math.min(y, meta.height - 10);
-        const width = Math.min(w, meta.width - left);
-        const height = Math.min(h, meta.height - top);
-        if (width < 20 || height < 20) return imagePath;
-        const croppedPath = imagePath.replace('.png', '_cropped.png');
-        await sharp(imagePath).extract({ left, top, width, height }).toFile(croppedPath);
-        if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
-        return croppedPath;
-    } catch (e) {
-        console.warn(`[PLAN-CAPTURE] AI crop failed: ${e.message}`);
-        return imagePath;
-    }
-}
 
 // ── Navigate to a sheet and select a specific tab by name ────────────────────
 async function navigateToTab(page, tabName) {
@@ -149,14 +115,55 @@ async function navigateToTab(page, tabName) {
     return true;
 }
 
+// ── Make sure the grid is scrolled to A1 and fully rendered ─────────────────
+async function prepareGridForCapture(page) {
+    // Jump to cell A1 so the capture always starts from the top-left of the sheet.
+    try {
+        await page.keyboard.press('Control+Home');
+        await page.waitForTimeout(500);
+    } catch { /* ignore */ }
+
+    // Nudge Google Sheets to re-render by firing a resize event.
+    await page.evaluate(() => window.dispatchEvent(new Event('resize')));
+    await page.waitForTimeout(1500);
+}
+
+// ── Screenshot the grid element and upload raw to Cloudinary ────────────────
+async function captureAndUpload(page, cloudinaryFolder) {
+    const tmpDir = process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
+    const tmpPath = path.join(tmpDir, `temp_plan_${uuidv4()}.png`);
+
+    await prepareGridForCapture(page);
+
+    // Prefer element screenshot of the grid container (it contains the canvas
+    // cells + row/column headers). Fallback to a viewport screenshot if the
+    // element is not available for any reason.
+    const gridHandle = await page.$('#waffle-grid-container');
+    if (gridHandle) {
+        await gridHandle.screenshot({ path: tmpPath });
+    } else {
+        console.warn('[PLAN-CAPTURE] #waffle-grid-container not found, falling back to viewport screenshot');
+        await page.screenshot({ path: tmpPath, fullPage: false });
+    }
+
+    const result = await uploadToCloudinary(tmpPath, cloudinaryFolder);
+    if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+    return result?.secure_url || result?.url || result;
+}
+
 // ── Open a Google Sheet with injected Google cookies ─────────────────────────
 async function openSheet(sheetUrl, googleCookies) {
     const browser = await chromium.launch({
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled']
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-blink-features=AutomationControlled',
+            `--window-size=${VIEWPORT.width},${VIEWPORT.height}`
+        ]
     });
     const context = await browser.newContext({
-        viewport: { width: 1600, height: 900 },
+        viewport: VIEWPORT,
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         locale: 'fr-FR'
     });
@@ -173,48 +180,9 @@ async function openSheet(sheetUrl, googleCookies) {
         await page.waitForSelector('body', { state: 'visible', timeout: 5000 });
     }
     await page.addStyleTag({ content: SHEETS_HIDE_CSS });
+    // Give the grid time to render its initial canvas paint.
+    await page.waitForTimeout(2500);
     return { browser, context, page };
-}
-
-// ── Resize viewport to fit the full sheet content ──────────────────────────
-async function resizeViewportToFitContent(page) {
-    try {
-        const contentSize = await page.evaluate(() => {
-            const grid = document.querySelector('#waffle-grid-container');
-            if (grid) {
-                return {
-                    width: Math.max(grid.scrollWidth, grid.offsetWidth),
-                    height: Math.max(grid.scrollHeight, grid.offsetHeight)
-                };
-            }
-            return {
-                width: document.documentElement.scrollWidth,
-                height: document.documentElement.scrollHeight
-            };
-        });
-
-        const newWidth = Math.max(1600, contentSize.width + 100);
-        const newHeight = Math.max(900, contentSize.height + 100);
-
-        console.log(`[PLAN-CAPTURE] Resizing viewport to ${newWidth}x${newHeight} to fit sheet content (detected: ${contentSize.width}x${contentSize.height})`);
-        await page.setViewportSize({ width: newWidth, height: newHeight });
-        await page.waitForTimeout(2000);
-    } catch (e) {
-        console.warn(`[PLAN-CAPTURE] Could not resize viewport: ${e.message}, using default size`);
-    }
-}
-
-// ── Screenshot and upload ───────────────────────────────────────────────────
-async function captureAndUpload(page, promptText, cloudinaryFolder) {
-    const tmpDir = process.env.RAILWAY_ENVIRONMENT ? '/tmp' : '.';
-    const tmpPath = path.join(tmpDir, `temp_plan_${uuidv4()}.png`);
-    await resizeViewportToFitContent(page);
-    await page.screenshot({ path: tmpPath, fullPage: true });
-    const croppedPath = await cropWithAI(tmpPath, promptText);
-    const result = await uploadToCloudinary(croppedPath, cloudinaryFolder);
-    if (fs.existsSync(croppedPath)) fs.unlinkSync(croppedPath);
-    if (fs.existsSync(tmpPath) && tmpPath !== croppedPath) fs.unlinkSync(tmpPath);
-    return result?.secure_url || result?.url || result;
 }
 
 // ── Main entry point ────────────────────────────────────────────────────────
@@ -239,10 +207,7 @@ export async function capturePlanDAction(sheetPlanUrl, auditId, googleCookies) {
                 }
 
                 console.log(`[PLAN-CAPTURE] 📸 Capturing content for: ${tab.tabName}`);
-                const url = await captureAndUpload(page,
-                    `${SHEET_CROP_PROMPT}\nRogne pour ne garder que le tableau. Supprime tous les menus.`,
-                    `audit-results/${tab.cloudinarySlug}-${auditId}`
-                );
+                const url = await captureAndUpload(page, `audit-results/${tab.cloudinarySlug}-${auditId}`);
 
                 results[tab.airtableField] = { statut: 'SUCCESS', capture: url };
                 console.log(`[PLAN-CAPTURE] ✅ Successfully captured and uploaded: ${tab.tabName}`);
@@ -253,7 +218,6 @@ export async function capturePlanDAction(sheetPlanUrl, auditId, googleCookies) {
         }
     } catch (e) {
         console.error(`[PLAN-CAPTURE] 💥 Critical error opening sheet: ${e.message}`);
-        // Mark all as error if we can't even open the sheet
         for (const tab of PLAN_TABS) {
             results[tab.airtableField] = { statut: 'ERROR', details: e.message };
         }
