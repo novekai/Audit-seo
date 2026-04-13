@@ -135,6 +135,15 @@ const Layout = ({ user, onLogout }) => {
                     </div>
 
                     <div className="flex items-center gap-2 lg:gap-6">
+                        <button
+                            onClick={onLogout}
+                            className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-600 transition-all hover:bg-rose-100 hover:text-rose-700"
+                            title="Déconnexion"
+                        >
+                            <LogOut size={18} className="shrink-0" />
+                            <span className="hidden sm:inline">Déconnexion</span>
+                        </button>
+
                         <div className="flex items-center gap-3 pl-2 lg:pl-6 border-l border-slate-200">
                             <div className="text-right hidden sm:block">
                                 <p className="text-sm font-semibold whitespace-nowrap">{user?.email || 'Admin Novek'}</p>

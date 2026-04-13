@@ -26,9 +26,17 @@ function App() {
     setUser(userData);
   };
 
-  const handleLogout = () => {
-    fetch('/api/auth/logout', { method: 'POST' })
-      .then(() => setUser(null));
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include'
+      });
+    } catch {
+    } finally {
+      localStorage.removeItem('token');
+      setUser(null);
+    }
   };
 
   if (loading) {
