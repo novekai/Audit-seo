@@ -109,6 +109,8 @@ function buildGoogleReconnectMessage() {
     return "Le compte Google n'est plus connecté à l'application. Reconnectez le bon compte Google dans les paramètres, puis relancez l'audit.";
 }
 
+const GSC_TRAFFIC_LOOKBACK_MONTHS = 12;
+
 /**
  * ── HELPER: Resolve Property ID ──────────────────────────────────────────────
  * Detects if the property is URL-prefix (https://domain/) or Domain (sc-domain:domain).
@@ -259,7 +261,7 @@ export async function captureGscPerformance(siteUrl, auditId, googleCookies) {
         const propertyId = await resolvePropertyId(page, domain);
 
         // GSC Performance page
-        const gscUrl = `https://search.google.com/search-console/performance/search-analytics?resource_id=${encodeURIComponent(propertyId)}`;
+        const gscUrl = `https://search.google.com/search-console/performance/search-analytics?resource_id=${encodeURIComponent(propertyId)}&num_of_months=${GSC_TRAFFIC_LOOKBACK_MONTHS}`;
         await gotoGscPage(page, gscUrl, 'Performance');
 
         if (page.url().includes('accounts.google.com')) {
@@ -457,7 +459,7 @@ export async function captureGscTopPages(siteUrl, auditId, googleCookies) {
         const propertyId = await resolvePropertyId(page, domain);
 
         // Performance page sorted by pages tab
-        const gscUrl = `https://search.google.com/search-console/performance/search-analytics?resource_id=${encodeURIComponent(propertyId)}&breakdown=page`;
+        const gscUrl = `https://search.google.com/search-console/performance/search-analytics?resource_id=${encodeURIComponent(propertyId)}&num_of_months=${GSC_TRAFFIC_LOOKBACK_MONTHS}&breakdown=page`;
         await gotoGscPage(page, gscUrl, 'Top Pages');
 
         if (page.url().includes('accounts.google.com')) {
