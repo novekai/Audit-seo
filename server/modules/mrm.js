@@ -116,6 +116,52 @@ async function launchWithAuth(authData) {
     return { browser, context, page };
 }
 
+async function findDepthTable(page) {
+    const tables = page.locator('table');
+    const count = await tables.count();
+    const normalize = (text) => String(text || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+    const expectedHeaders = [
+        'profondeur',
+        'nb de pages',
+        'nb cumule de pages',
+        'pourcentage des pages',
+        'pourcentage cumule'
+    ];
+
+    for (let i = 0; i < count; i += 1) {
+        const table = tables.nth(i);
+        const text = normalize(await table.innerText().catch(() => ''));
+        if (expectedHeaders.every((header) => text.includes(header))) {
+            return table;
+        }
+    }
+
+    return null;
+}
+
+async function screenshotDepthTableWithContext(page, tableEl, outPath) {
+    const tableBox = await tableEl.boundingBox();
+    if (!tableBox) {
+        await tableEl.screenshot({ path: outPath });
+        return;
+    }
+
+    const viewport = page.viewportSize() || { width: 1400, height: 900 };
+    const clip = {
+        x: Math.max(0, tableBox.x - 24),
+        y: Math.max(0, tableBox.y - 90),
+        width: Math.min(viewport.width - Math.max(0, tableBox.x - 24), tableBox.width + 48),
+        height: Math.min(viewport.height - Math.max(0, tableBox.y - 90), tableBox.height + 130)
+    };
+
+    await page.screenshot({ path: outPath, clip });
+}
+
 //  MY RANKING METRICS — Profondeur des pages
 export async function captureMrmProfondeur(mrmReportUrl, auditId, authData) {
     const result = { statut: 'ERROR', capture: null };
@@ -149,51 +195,49 @@ export async function captureMrmProfondeur(mrmReportUrl, auditId, authData) {
             return result;
         }
 
-        // Stratégie de scroll pour MRM Section 4
-        let tableEl = page.locator('table').first();
+        let tableEl = null;
         try {
-            console.log(`[MRM] Hunting for section 4 ("Profondeur")...`);
+            console.log(`[MRM] Hunting for section 4.1 depth table...`);
 
-            // 1. Cibler le conteneur principal ou le titre
-            const sectionHeader = page.locator('h2#profondeur').first();
+            const sectionHeader = page.locator('text=/4\\.1\\s+Analyse de la profondeur des pages|Analyse de la profondeur des pages/i').first();
 
-            if (await sectionHeader.isVisible()) {
-                console.log(`[MRM] Found section by h2#profondeur.`);
+            if (await sectionHeader.count() > 0 && await sectionHeader.isVisible()) {
+                console.log(`[MRM] Found section 4.1 header.`);
                 await sectionHeader.scrollIntoViewIfNeeded();
                 await page.waitForTimeout(500);
             }
 
-            // 2. Trouver le tableau de données de la section 4.1 (Profondeur)
-            tableEl = page.locator('#profondeur, #s4\\.1').locator('xpath=following::table').first();
+            tableEl = await findDepthTable(page);
 
-            if (await tableEl.isVisible()) {
+            if (tableEl && await tableEl.isVisible()) {
                 console.log(`[MRM] Found depth table. Scrolling...`);
                 await tableEl.evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
-                await page.evaluate(() => window.scrollBy(0, -150));
-                console.log(`[MRM] Scrolled to Section 4 table.`);
+                await page.evaluate(() => window.scrollBy(0, -80));
+                console.log(`[MRM] Scrolled to Section 4.1 depth table.`);
             } else {
-                console.warn(`[MRM] Table not found with XPath, searching by class.`);
-                tableEl = page.locator('.tablecenter').first();
+                console.warn(`[MRM] Depth table not found by headers, falling back to first table after section.`);
+                tableEl = page.locator('#profondeur, #s4\\.1').locator('xpath=following::table').first();
                 await tableEl.scrollIntoViewIfNeeded();
             }
 
             await page.waitForTimeout(3000);
         } catch (err) {
             console.warn(`[MRM] Precise section 4 scrolling failed: ${err.message}.`);
-            await page.locator('table').first().scrollIntoViewIfNeeded().catch(() => { });
+            tableEl = await findDepthTable(page);
+            if (tableEl) await tableEl.scrollIntoViewIfNeeded().catch(() => { });
         }
 
         const tmpPath = path.resolve(`temp_mrm_${uuidv4()}.png`);
 
-        // Screenshot du TABLEAU uniquement (plus propre que la page entière)
-        if (await tableEl.isVisible()) {
-            await tableEl.screenshot({ path: tmpPath });
+        if (tableEl && await tableEl.isVisible()) {
+            await screenshotDepthTableWithContext(page, tableEl, tmpPath);
         } else {
             await page.screenshot({ path: tmpPath, fullPage: false });
         }
 
-        const prompt = `Cette image montre un tableau de données My Ranking Metrics sur la profondeur des pages.
-Rogne pour ne garder que le tableau, sans aucun menu ni chrome de l'application.
+        const prompt = `Cette image montre le paragraphe 4.1 "Analyse de la profondeur des pages" de My Ranking Metrics.
+Rogne pour garder le tableau "Voici les résultats selon les niveaux" avec les colonnes Profondeur, Nb de pages, Nb cumulé de pages, Pourcentage des pages et Pourcentage cumulé.
+Conserve le titre ou la phrase juste au-dessus si elle est visible, mais supprime le menu, le navigateur et le graphique du dessous.
 CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
 
         const croppedPath = await cropWithAI(tmpPath, prompt);
