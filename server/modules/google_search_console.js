@@ -92,6 +92,21 @@ async function clickFirstVisible(page, selectors) {
     return false;
 }
 
+async function scrollToFirstVisible(page, selectors) {
+    for (const selector of selectors) {
+        try {
+            const locator = page.locator(selector).first();
+            if (await locator.count() === 0) continue;
+            await locator.scrollIntoViewIfNeeded({ timeout: 5000 });
+            return true;
+        } catch {
+            // Continue with the next selector candidate.
+        }
+    }
+
+    return false;
+}
+
 async function gotoGscPage(page, url, label) {
     console.log(`[GSC] Navigating to ${label}: ${url}`);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -433,25 +448,39 @@ CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
         });
         result.indexationCapture = result.capture;
 
-        await page.evaluate(() => window.scrollBy(0, 900));
-        await page.waitForTimeout(2500);
+        await scrollToFirstVisible(page, [
+            'text=Pourquoi les pages ne sont pas indexées',
+            'text=Pages non indexées',
+            `text=Why pages aren't indexed`
+        ]);
+        await page.evaluate(() => window.scrollBy(0, -140));
+        await page.waitForTimeout(1500);
         await clickFirstVisible(page, [
             'text=Pourquoi les pages ne sont pas indexées',
             'text=Pages non indexées',
             `text=Why pages aren't indexed`
         ]);
+        await page.setViewportSize({ width: 1600, height: 1200 });
+        await scrollToFirstVisible(page, [
+            'text=Pourquoi les pages ne sont pas indexées',
+            'text=Pages non indexées',
+            `text=Why pages aren't indexed`
+        ]);
+        await page.evaluate(() => window.scrollBy(0, -120));
         await page.waitForTimeout(2000);
 
         const problemPrompt = `Cette image montre Google Search Console, section d'explication de non-indexation.
-Rogne pour ne garder que le tableau ou la liste des motifs expliquant pourquoi des pages ne sont pas indexées.
-Conserve les colonnes utiles comme le motif, la source ou le nombre de pages, et supprime le menu lateral.
+Rogne pour garder le titre "Pourquoi des pages ne sont pas indexées" et le tableau complet juste en dessous.
+Conserve toutes les lignes visibles du tableau, le pied de tableau, et les colonnes Raison, Source, Validation, Tendance et Pages.
+Supprime le menu lateral, le graphe du dessus et les zones inutiles autour.
 CROP: x=[left], y=[top], width=[largeur], height=[hauteur]`;
 
         try {
             result.problemCapture = await captureSection(page, {
                 tmpPrefix: 'temp_gsc_coverage_problems',
                 uploadFolder: `audit-results/gsc-coverage-problems-${auditId}`,
-                prompt: problemPrompt
+                prompt: problemPrompt,
+                fullPage: true
             });
         } catch (e) {
             console.warn(`[GSC] Coverage problems capture failed: ${e.message}`);
