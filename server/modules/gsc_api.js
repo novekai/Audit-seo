@@ -62,6 +62,29 @@ function dateDaysAgo(days) {
     return d.toISOString().split('T')[0];
 }
 
+function dateMonthsAgo(months) {
+    const d = new Date();
+    d.setMonth(d.getMonth() - months);
+    return d.toISOString().split('T')[0];
+}
+
+const GSC_TRAFFIC_LOOKBACK_MONTHS = 12;
+
+function getGscTrafficDateRange() {
+    return {
+        startDate: dateMonthsAgo(GSC_TRAFFIC_LOOKBACK_MONTHS),
+        endDate: dateDaysAgo(1)
+    };
+}
+
+function formatDateRangeSubtitle(startDate, endDate) {
+    return `${new Date(startDate).toLocaleDateString('fr-FR')} — ${new Date(endDate).toLocaleDateString('fr-FR')}`;
+}
+
+function formatTrafficPeriodLabel() {
+    return `${GSC_TRAFFIC_LOOKBACK_MONTHS} derniers mois`;
+}
+
 function buildGoogleDomainAccessMessage(domain) {
     return `Le compte Google connecté n'est pas relié au domaine ${domain} dans Google Search Console. Connectez le bon compte Google ou ajoutez ce compte à la propriété, puis relancez l'audit.`;
 }
@@ -486,8 +509,7 @@ export async function captureGscPerformanceAPI(siteUrl, auditId, refreshToken) {
         const sc = searchConsoleClient(refreshToken);
         const siteUrlResolved = await resolveSiteUrl(wm, domain);
 
-        const startDate = dateDaysAgo(30);
-        const endDate = dateDaysAgo(1);
+        const { startDate, endDate } = getGscTrafficDateRange();
 
         // -- Fetch aggregate metrics --
         console.log(`[GSC-API] Fetching performance for: ${siteUrlResolved}`);
@@ -506,7 +528,7 @@ export async function captureGscPerformanceAPI(siteUrl, auditId, refreshToken) {
         // -- Capture 1: Summary metrics cards --
         const metricsHtml = renderHtmlMetricCards({
             title: 'Performance — Google Search Console',
-            subtitle: `${new Date(startDate).toLocaleDateString('fr-FR')} — ${new Date(endDate).toLocaleDateString('fr-FR')}`,
+            subtitle: formatDateRangeSubtitle(startDate, endDate),
             metrics: [
                 { label: 'Clics totaux', value: formatNumber(totalClicks), color: '#1a73e8' },
                 { label: 'Impressions', value: formatNumber(totalImpressions), color: '#9334e6' },
@@ -539,7 +561,7 @@ export async function captureGscPerformanceAPI(siteUrl, auditId, refreshToken) {
         if (queryRows.length > 0) {
             const queryTableHtml = renderHtmlTable({
                 title: 'Top requêtes — Google Search Console',
-                subtitle: `${queryRows.length} requêtes — ${new Date(startDate).toLocaleDateString('fr-FR')} au ${new Date(endDate).toLocaleDateString('fr-FR')}`,
+                subtitle: `${queryRows.length} requêtes — ${formatDateRangeSubtitle(startDate, endDate)}`,
                 headers: ['Requête', 'Clics', 'Impressions', 'CTR', 'Position'],
                 rows: queryRows
             });
@@ -580,14 +602,15 @@ export async function captureGscCoverageAPI(siteUrl, auditId, refreshToken) {
         const wm = webmastersClient(refreshToken);
         const sc = searchConsoleClient(refreshToken);
         const siteUrlResolved = await resolveSiteUrl(wm, domain);
+        const { startDate, endDate } = getGscTrafficDateRange();
 
         // Use search analytics to count unique pages appearing in search (≈ indexed pages)
         console.log(`[GSC-API] Fetching coverage for: ${siteUrlResolved}`);
         const { data: pageData } = await sc.searchanalytics.query({
             siteUrl: siteUrlResolved,
             requestBody: {
-                startDate: dateDaysAgo(90),
-                endDate: dateDaysAgo(1),
+                startDate,
+                endDate,
                 dimensions: ['page'],
                 rowLimit: 5000
             }
@@ -602,7 +625,7 @@ export async function captureGscCoverageAPI(siteUrl, auditId, refreshToken) {
         // -- Capture: Indexation summary --
         const metricsHtml = renderHtmlMetricCards({
             title: 'Indexation — Google Search Console',
-            subtitle: `Propriété : ${siteUrlResolved} — 90 derniers jours`,
+            subtitle: `Propriété : ${siteUrlResolved} — ${formatTrafficPeriodLabel()}`,
             metrics: [
                 { label: 'Pages dans les résultats de recherche', value: formatNumber(indexedCount), color: '#0d904f' }
             ]
@@ -673,13 +696,14 @@ export async function captureGscTopPagesAPI(siteUrl, auditId, refreshToken) {
         const wm = webmastersClient(refreshToken);
         const sc = searchConsoleClient(refreshToken);
         const siteUrlResolved = await resolveSiteUrl(wm, domain);
+        const { startDate, endDate } = getGscTrafficDateRange();
 
         console.log(`[GSC-API] Fetching top pages for: ${siteUrlResolved}`);
         const { data } = await sc.searchanalytics.query({
             siteUrl: siteUrlResolved,
             requestBody: {
-                startDate: dateDaysAgo(30),
-                endDate: dateDaysAgo(1),
+                startDate,
+                endDate,
                 dimensions: ['page'],
                 rowLimit: 20
             }
@@ -718,7 +742,7 @@ export async function captureGscTopPagesAPI(siteUrl, auditId, refreshToken) {
 
         const html = renderHtmlTable({
             title: 'Meilleures pages — Google Search Console',
-            subtitle: `${pages.length} pages — 30 derniers jours`,
+            subtitle: `${pages.length} pages — ${formatTrafficPeriodLabel()}`,
             headers,
             rows
         });
