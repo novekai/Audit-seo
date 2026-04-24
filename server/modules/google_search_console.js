@@ -387,24 +387,39 @@ export async function captureGscCoverage(siteUrl, auditId, googleCookies) {
             return result;
         }
 
-        // Try to extract indexed pages count
-        const indexed = await page.evaluate(() => {
-            const elements = document.querySelectorAll('[class*="metric"], [class*="count"], span, div');
-            for (const el of elements) {
-                const text = el.innerText?.trim();
-                // Look for a number near "Valid" or "Indexées" labels
-                if (text && /^\d[\d,.]*$/.test(text.replace(/\s/g, ''))) {
-                    const container = el.closest('[class*="card"]');
-                    const label = container?.innerText?.toLowerCase();
-                    if (label?.includes('valid') || label?.includes('indexé') || label?.includes('indexed')) {
-                        return text;
-                    }
+        const indexationTotals = await page.evaluate(() => {
+            const normalize = (text) => String(text || '')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .toLowerCase();
+            const firstNumber = (text) => String(text || '').match(/\d[\d\s.,]*/)?.[0]?.trim() || null;
+            const containers = Array.from(document.querySelectorAll('[class*="card"], [role="button"], div, section, article'));
+            const totals = { indexed: null, notIndexed: null };
+
+            for (const container of containers) {
+                const text = normalize(container.innerText);
+                if (!text) continue;
+                const number = firstNumber(container.innerText);
+                if (!number) continue;
+
+                const isNotIndexedBlock = text.includes('non indexées') || text.includes('non indexees') || text.includes('not indexed');
+                const isIndexedBlock = text.includes('dans l’index') || text.includes("dans l'index") || text.includes('indexed');
+
+                if (!totals.indexed && isIndexedBlock && !isNotIndexedBlock) {
+                    totals.indexed = number;
                 }
+
+                if (!totals.notIndexed && isNotIndexedBlock) {
+                    totals.notIndexed = number;
+                }
+
+                if (totals.indexed && totals.notIndexed) break;
             }
-            return null;
+
+            return totals;
         });
-        if (indexed) result.pagesIndexed = indexed;
-        console.log(`[GSC] Pages indexed: ${indexed || 'N/A'}`);
+        if (indexationTotals.indexed) result.pagesIndexed = indexationTotals.indexed;
+        console.log(`[GSC] Indexation totals: ${JSON.stringify(indexationTotals)}`);
 
         const prompt = `Cette image montre Google Search Console, page Couverture/Index.
 Rogne pour ne garder que le graphe de couverture (barres vertes/rouges montrant les pages indexées) et les chiffres résumés.

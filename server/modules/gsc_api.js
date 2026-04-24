@@ -588,101 +588,17 @@ export async function captureGscPerformanceAPI(siteUrl, auditId, refreshToken) {
 // ══════════════════════════════════════════════════════════════════════════════
 // 4. COVERAGE (Pages Indexed)
 // ══════════════════════════════════════════════════════════════════════════════
-export async function captureGscCoverageAPI(siteUrl, auditId, refreshToken) {
+export async function captureGscCoverageAPI(siteUrl) {
     const result = {
-        statut: 'ERROR',
+        statut: 'SKIP',
         capture: null,
         pagesIndexed: null,
         indexationCapture: null,
         problemCapture: null
     };
 
-    try {
-        const domain = new URL(siteUrl).hostname;
-        const wm = webmastersClient(refreshToken);
-        const sc = searchConsoleClient(refreshToken);
-        const siteUrlResolved = await resolveSiteUrl(wm, domain);
-        const { startDate, endDate } = getGscTrafficDateRange();
-
-        // Use search analytics to count unique pages appearing in search (≈ indexed pages)
-        console.log(`[GSC-API] Fetching coverage for: ${siteUrlResolved}`);
-        const { data: pageData } = await sc.searchanalytics.query({
-            siteUrl: siteUrlResolved,
-            requestBody: {
-                startDate,
-                endDate,
-                dimensions: ['page'],
-                rowLimit: 5000
-            }
-        });
-
-        const indexedPages = pageData.rows || [];
-        const indexedCount = indexedPages.length;
-        result.pagesIndexed = String(indexedCount);
-
-        console.log(`[GSC-API] Pages appearing in search: ${indexedCount}`);
-
-        // -- Capture: Indexation summary --
-        const metricsHtml = renderHtmlMetricCards({
-            title: 'Indexation — Google Search Console',
-            subtitle: `Propriété : ${siteUrlResolved} — ${formatTrafficPeriodLabel()}`,
-            metrics: [
-                { label: 'Pages dans les résultats de recherche', value: formatNumber(indexedCount), color: '#0d904f' }
-            ]
-        });
-        result.capture = await renderAndUpload(metricsHtml, `audit-results/gsc-coverage-${auditId}`);
-        result.indexationCapture = result.capture;
-
-        // -- Try URL Inspection for a sample to check indexation problems --
-        const sampleUrls = indexedPages.slice(0, 5).map(r => r.keys[0]);
-        const problems = [];
-
-        for (const inspectUrl of sampleUrls) {
-            try {
-                const { data: inspection } = await sc.urlInspection.index.inspect({
-                    requestBody: {
-                        inspectionUrl: inspectUrl,
-                        siteUrl: siteUrlResolved
-                    }
-                });
-                const verdict = inspection.inspectionResult?.indexStatusResult?.verdict;
-                const coverageState = inspection.inspectionResult?.indexStatusResult?.coverageState;
-                if (verdict && verdict !== 'PASS') {
-                    problems.push({
-                        url: inspectUrl,
-                        verdict,
-                        reason: coverageState || 'Unknown'
-                    });
-                }
-            } catch (e) {
-                console.warn(`[GSC-API] URL Inspection failed for ${inspectUrl}: ${e.message}`);
-                break; // Stop if quota exceeded
-            }
-        }
-
-        if (problems.length > 0) {
-            const problemHtml = renderHtmlTable({
-                title: 'Problèmes d\'indexation détectés',
-                subtitle: `Échantillon de ${sampleUrls.length} URLs inspectées`,
-                headers: ['URL', 'Verdict', 'Raison'],
-                rows: problems.map(p => [p.url, p.verdict, p.reason])
-            });
-            result.problemCapture = await renderAndUpload(problemHtml, `audit-results/gsc-coverage-problems-${auditId}`);
-        } else {
-            const okHtml = renderHtmlStatus({
-                title: 'Problèmes d\'indexation — Google Search Console',
-                status: 'OK',
-                icon: 'Aucun problème d\'indexation détecté',
-                details: `${sampleUrls.length} URLs inspectées — toutes indexées correctement`
-            });
-            result.problemCapture = await renderAndUpload(okHtml, `audit-results/gsc-coverage-problems-${auditId}`);
-        }
-
-        result.statut = 'SUCCESS';
-    } catch (e) {
-        result.details = normalizeGscError(e, new URL(siteUrl).hostname);
-        console.error('[GSC-API] Coverage error:', extractGscErrorMessage(e) || result.details);
-    }
+    const domain = new URL(siteUrl).hostname;
+    result.details = `Les totaux exacts d'indexation Google Search Console pour ${domain} ne sont pas disponibles via l'API. Une session navigateur Google est nécessaire pour capturer les compteurs "Non indexées" et "Dans l'index".`;
     return result;
 }
 

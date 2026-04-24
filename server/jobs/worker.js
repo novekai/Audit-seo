@@ -687,10 +687,14 @@ export const initWorker = (io, db) => {
                     await updateStep('gsc_coverage', 'EN_COURS');
                     await updateStep('gsc_indexation_image', 'EN_COURS');
                     await updateStep('gsc_problemes_indexation', 'EN_COURS');
+                    googleCookies = googleCookies || await getSessionCookies('google');
+                    const hasGoogleBrowserSession = Array.isArray(googleCookies) && googleCookies.length > 0;
                     const gscCovRes = await runWithTimeout(
-                        captureGscCoverageAPI(siteUrl, auditId, googleRefreshToken),
+                        hasGoogleBrowserSession
+                            ? captureGscCoverage(siteUrl, auditId, googleCookies)
+                            : captureGscCoverageAPI(siteUrl, auditId, googleRefreshToken),
                         240000,
-                        'GSC Coverage API'
+                        hasGoogleBrowserSession ? 'GSC Coverage' : 'GSC Coverage API'
                     );
                     await updateStep('gsc_coverage', gscCovRes.statut, gscCovRes.details, gscCovRes.capture);
                     const indexationStep = buildDerivedCaptureStep(
