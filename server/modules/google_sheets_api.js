@@ -140,6 +140,14 @@ const CAPTURE_CONFIGS = [
     { airtableField: "Img_Requetes_cles", target: "plan", mode: "raw", tabName: "Requêtes Clés / Calédito", skipIfEmpty: true },
     { airtableField: "Img_donnee_image", target: "plan", mode: "raw", tabName: "Données Images", skipIfEmpty: true },
     { airtableField: "Img_longeur_page_plan", target: "plan", mode: "raw", tabName: "Longueur de page", skipIfEmpty: true },
+    {
+        airtableField: "Lien_image_qualite_des_pages",
+        linkField: "Lien_qualite_des_pages",
+        target: "plan",
+        mode: "raw",
+        tabName: "Qualité des pages",
+        skipIfEmpty: true
+    },
 ];
 
 /**
@@ -270,6 +278,28 @@ function trimEmptyColumns(values) {
     }
     if (lastUsed < 0) return [["(vide)"]];
     return rows.map((r) => r.slice(0, lastUsed + 1));
+}
+
+async function readSheetIdByTitle(sheets, spreadsheetId, tabName) {
+    try {
+        const res = await sheets.spreadsheets.get({
+            spreadsheetId,
+            fields: "sheets.properties(sheetId,title)",
+        });
+        const wanted = norm(tabName);
+        const sheet = (res.data.sheets || [])
+            .map((entry) => entry.properties)
+            .find((properties) => norm(properties?.title) === wanted);
+        return typeof sheet?.sheetId === "number" ? sheet.sheetId : null;
+    } catch (e) {
+        console.warn(`[SHEETS-API] Impossible de lire le gid de l'onglet "${tabName}": ${e.message}`);
+        return null;
+    }
+}
+
+function buildGoogleSheetTabUrl(spreadsheetId, sheetId, range = "A1") {
+    if (typeof sheetId !== "number") return null;
+    return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit#gid=${sheetId}&range=${encodeURIComponent(range)}`;
 }
 
 function padRow(row, width) {
@@ -609,6 +639,8 @@ export async function auditGoogleSheetsAPI(sheetAuditUrl, sheetPlanUrl, auditId,
         if (!spreadsheetId) continue;
 
         try {
+            const sheetId = cfg.linkField ? await readSheetIdByTitle(sheets, spreadsheetId, cfg.tabName) : null;
+            const sheetUrl = cfg.linkField ? buildGoogleSheetTabUrl(spreadsheetId, sheetId) : null;
             const { values, found, error } = await readTab(sheets, spreadsheetId, cfg.tabName);
             const built = buildTable(values, cfg, { found, error });
 
@@ -625,10 +657,17 @@ export async function auditGoogleSheetsAPI(sheetAuditUrl, sheetPlanUrl, auditId,
                     results[cfg.airtableField] = {
                         statut: "SUCCESS",
                         capture: cloudinaryUrl?.secure_url || cloudinaryUrl?.url || cloudinaryUrl,
-                        details: built.reason || "Aucun problème détecté"
+                        details: built.reason || "Aucun problème détecté",
+                        linkField: cfg.linkField,
+                        sheetUrl
                     };
                 } else {
-                    results[cfg.airtableField] = { statut: "SKIP", details: built.reason || "Aucune donnée" };
+                    results[cfg.airtableField] = {
+                        statut: "SKIP",
+                        details: built.reason || "Aucune donnée",
+                        linkField: cfg.linkField,
+                        sheetUrl
+                    };
                 }
                 continue;
             }
@@ -654,7 +693,9 @@ export async function auditGoogleSheetsAPI(sheetAuditUrl, sheetPlanUrl, auditId,
             results[cfg.airtableField] = {
                 statut: "SUCCESS",
                 capture: cloudinaryUrl?.secure_url || cloudinaryUrl?.url || cloudinaryUrl,
-                details: `${built.table.length - 1} lignes.`
+                details: `${built.table.length - 1} lignes.`,
+                linkField: cfg.linkField,
+                sheetUrl
             };
         } catch (e) {
             console.error(`[SHEETS-API] Erreur sur ${cfg.airtableField}: ${e.message}`);

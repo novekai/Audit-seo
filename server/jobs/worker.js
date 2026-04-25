@@ -257,7 +257,8 @@ export const initWorker = (io, db) => {
                 "Img_Requetes_cles": "plan_requetes",
                 "Img_donnee_image": "plan_donnees_img",
                 "Img_donnee image": "plan_donnees_img",
-                "Img_longeur_page_plan": "plan_longueur"
+                "Img_longeur_page_plan": "plan_longueur",
+                "Lien_image_qualite_des_pages": "plan_qualite_pages"
             };
             const planStepKeys = [...new Set(Object.values(planStepsMap))];
 
@@ -343,6 +344,13 @@ export const initWorker = (io, db) => {
                                 await updateAirtableField(audit.airtable_record_id, fieldId, res.capture);
                             } catch (e) {
                                 console.error(`[WORKER] Failed to update Airtable for ${fieldId}:`, e.message);
+                            }
+                        }
+                        if (res.linkField && res.sheetUrl && audit.airtable_record_id) {
+                            try {
+                                await updateAirtableField(audit.airtable_record_id, res.linkField, res.sheetUrl);
+                            } catch (e) {
+                                console.error(`[WORKER] Failed to update Airtable for ${res.linkField}:`, e.message);
                             }
                         }
                     }

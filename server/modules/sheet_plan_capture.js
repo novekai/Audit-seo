@@ -45,6 +45,12 @@ const PLAN_TABS = [
         tabName: "Longueur de page",
         cloudinarySlug: "plan-longueur"
     },
+    {
+        airtableField: "Lien_image_qualite_des_pages",
+        linkField: "Lien_qualite_des_pages",
+        tabName: "Qualité des pages",
+        cloudinarySlug: "plan-qualite-pages"
+    },
 ];
 
 // ── Navigate to a sheet and select a specific tab by name ────────────────────
@@ -79,12 +85,15 @@ async function navigateToTab(page, tabName) {
             const dataId = parent.getAttribute('data-id');
             if (dataId) gid = dataId;
         }
+        if (!gid) {
+            gid = new URL(window.location.href).hash.match(/gid=([^&]+)/)?.[1] || null;
+        }
         return { found: true, gid, isActive, name: target.innerText.trim() };
     }, tabName);
 
     if (!result.found) {
         await page.evaluate(() => { const b = document.querySelector('.grid-bottom-bar'); if (b) b.style.display = 'none'; });
-        return false;
+        return { found: false };
     }
 
     if (!result.isActive && result.gid) {
@@ -112,7 +121,14 @@ async function navigateToTab(page, tabName) {
     }
     await page.evaluate(() => { const b = document.querySelector('.grid-bottom-bar'); if (b) b.style.display = 'none'; });
     await page.waitForTimeout(2000);
-    return true;
+    return { found: true, gid: result.gid };
+}
+
+function buildCurrentSheetTabUrl(page, gid) {
+    if (!gid) return null;
+    const url = new URL(page.url());
+    url.hash = `gid=${gid}&range=A1`;
+    return url.toString();
 }
 
 // ── Make sure the grid is scrolled to A1 and fully rendered ─────────────────
@@ -199,8 +215,8 @@ export async function capturePlanDAction(sheetPlanUrl, auditId, googleCookies) {
         for (const tab of PLAN_TABS) {
             try {
                 console.log(`[PLAN-CAPTURE] 🎯 Processing tab: "${tab.tabName}"`);
-                const found = await navigateToTab(page, tab.tabName);
-                if (!found) {
+                const tabNavigation = await navigateToTab(page, tab.tabName);
+                if (!tabNavigation.found) {
                     console.warn(`[PLAN-CAPTURE] ⚠️ Tab "${tab.tabName}" not found. skipping.`);
                     results[tab.airtableField] = { statut: 'SKIP', details: 'Onglet introuvable' };
                     continue;
@@ -209,7 +225,12 @@ export async function capturePlanDAction(sheetPlanUrl, auditId, googleCookies) {
                 console.log(`[PLAN-CAPTURE] 📸 Capturing content for: ${tab.tabName}`);
                 const url = await captureAndUpload(page, `audit-results/${tab.cloudinarySlug}-${auditId}`);
 
-                results[tab.airtableField] = { statut: 'SUCCESS', capture: url };
+                results[tab.airtableField] = {
+                    statut: 'SUCCESS',
+                    capture: url,
+                    linkField: tab.linkField,
+                    sheetUrl: buildCurrentSheetTabUrl(page, tabNavigation.gid)
+                };
                 console.log(`[PLAN-CAPTURE] ✅ Successfully captured and uploaded: ${tab.tabName}`);
             } catch (tabErr) {
                 console.error(`[PLAN-CAPTURE] ❌ Error processing tab "${tab.tabName}": ${tabErr.message}`);

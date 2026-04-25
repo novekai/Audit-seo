@@ -18,7 +18,8 @@ const PLAN_SOURCE_TAB_NAMES = [
     'Contenu',
     'Requêtes Clés / Calédito',
     'Données Images',
-    'Longueur de page'
+    'Longueur de page',
+    'Qualité des pages'
 ];
 
 const AUDIT_RULE_TABS = [
@@ -45,6 +46,11 @@ const ACTION_PLAN_OUTPUT_TAB_CONFIGS = [
         sourceTabName: 'Longueur de page',
         targetTitle: 'Longueur de page',
         airtableField: 'Lien_longueur_page'
+    },
+    {
+        sourceTabName: 'Qualité des pages',
+        targetTitle: 'Qualité des pages',
+        airtableField: 'Lien_qualite_des_pages'
     }
 ];
 

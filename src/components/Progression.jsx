@@ -56,6 +56,7 @@ const STEP_LABELS = {
     plan_requetes: 'Plan d’action requêtes',
     plan_donnees_img: 'Plan d’action données images',
     plan_longueur: 'Plan d’action longueur des pages',
+    plan_qualite_pages: 'Plan d’action qualité des pages',
     gsc_sitemaps: 'Google Search Console - sitemaps',
     gsc_https: 'Google Search Console - HTTPS',
     gsc_performance: 'Google Search Console - performances',
