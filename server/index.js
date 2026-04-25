@@ -1694,7 +1694,8 @@ app.get('/api/sessions/status', authenticateToken, async (req, res) => {
 
 const GOOGLE_SCOPES = [
     'https://www.googleapis.com/auth/webmasters.readonly',
-    'https://www.googleapis.com/auth/spreadsheets'
+    'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/drive.file'
 ];
 
 function googleOAuth2Client() {

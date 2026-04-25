@@ -74,6 +74,32 @@ function createSheetsClient(auth) {
     return google.sheets({ version: 'v4', auth });
 }
 
+function createDriveClient(auth) {
+    return google.drive({ version: 'v3', auth });
+}
+
+async function shareSpreadsheetForAnyoneEdit(drive, spreadsheetId) {
+    try {
+        await drive.permissions.create({
+            fileId: spreadsheetId,
+            requestBody: {
+                type: 'anyone',
+                role: 'writer'
+            },
+            fields: 'id'
+        });
+    } catch (err) {
+        const rawMessage =
+            err?.response?.data?.error?.message ||
+            err?.message ||
+            'Erreur inconnue';
+        throw new Error(
+            `Le Google Sheet a été créé, mais le partage "toute personne avec le lien peut modifier" a échoué: ${rawMessage}. ` +
+            `Vérifiez que le compte Google backend a autorisé le scope Google Drive.`
+        );
+    }
+}
+
 function extractSpreadsheetId(url) {
     if (!url) return null;
     const match = String(url).match(/\/d\/([a-zA-Z0-9-_]+)/);
@@ -948,6 +974,7 @@ export async function generateActionPlanSheet(audit) {
 
     const auth = createGoogleAuth();
     const sheets = createSheetsClient(auth);
+    const drive = createDriveClient(auth);
 
     // 1. Créer le Google Sheet
     const createResponse = await sheets.spreadsheets.create({
@@ -967,6 +994,8 @@ export async function generateActionPlanSheet(audit) {
     if (!spreadsheetId) {
         throw new Error("La création du Google Sheet plan d'actions a échoué.");
     }
+
+    await shareSpreadsheetForAnyoneEdit(drive, spreadsheetId);
 
     // 2. Charger les données source
     const planValuesByTab = await loadValuesByTab(sheets, audit.sheet_plan_url, PLAN_SOURCE_TAB_NAMES);
