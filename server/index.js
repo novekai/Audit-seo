@@ -1121,7 +1121,7 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
             'sheet_hn_longue', 'sheet_mots_body', 'sheet_meta_desc',
             'sheet_balise_title',
             // Phase 3: Google Sheets — Plan d'action
-            'plan_synthese', 'plan_requetes', 'plan_donnees_img', 'plan_longueur',
+            'plan_synthese', 'plan_requetes', 'plan_donnees_img', 'plan_longueur', 'plan_qualite_pages',
             // Phase 4: Google Search Console
             'gsc_sitemaps', 'gsc_https',
             // Phase 5: Authenticated sessions
@@ -1515,13 +1515,16 @@ app.post('/api/audits/:id/generate-action-plan', authenticateToken, async (req, 
             try {
                 const captureResults = await auditGoogleSheetsAPI(null, spreadsheetUrl, auditId, {
                     targets: ['plan'],
-                    fields: ["Img_planD'action"]
+                    fields: ["Img_planD'action", "Lien_image_qualite_des_pages"]
                 });
                 actionPlanPreviewUrl = captureResults?.["Img_planD'action"]?.capture || null;
+                const qualityPagesResult = captureResults?.["Lien_image_qualite_des_pages"] || null;
 
                 if (!actionPlanPreviewUrl) {
                     console.warn(`[ACTION PLAN] No preview generated for audit ${auditId}: ${captureResults?.["Img_planD'action"]?.details || 'capture absente'}`);
                 }
+                actionPlanResult.qualityPagesCaptureUrl = qualityPagesResult?.capture || null;
+                actionPlanResult.qualityPagesTabUrl = qualityPagesResult?.sheetUrl || null;
             } catch (captureErr) {
                 console.error(`[ACTION PLAN] Preview capture failed for audit ${auditId}:`, captureErr.message);
             }
@@ -1551,6 +1554,16 @@ app.post('/api/audits/:id/generate-action-plan', authenticateToken, async (req, 
                 if (actionPlanPreviewUrl) {
                     airtableUpdates.push(
                         updateAirtableField(audit.airtable_record_id, "Img_planD'action", actionPlanPreviewUrl)
+                    );
+                }
+                if (actionPlanResult.qualityPagesCaptureUrl) {
+                    airtableUpdates.push(
+                        updateAirtableField(audit.airtable_record_id, "Lien_image_qualite_des_pages", actionPlanResult.qualityPagesCaptureUrl)
+                    );
+                }
+                if (actionPlanResult.qualityPagesTabUrl) {
+                    airtableUpdates.push(
+                        updateAirtableField(audit.airtable_record_id, "Lien_qualite_des_pages", actionPlanResult.qualityPagesTabUrl)
                     );
                 }
 
