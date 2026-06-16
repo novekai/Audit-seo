@@ -107,6 +107,52 @@ async function scrollToFirstVisible(page, selectors) {
     return false;
 }
 
+// ── Force la période "12 derniers mois" via interaction UI ──────────────────
+// Le paramètre URL num_of_months n'est PAS reconnu par GSC : la page s'ouvre
+// toujours sur sa période par défaut (3 derniers mois). Le seul moyen fiable
+// d'obtenir 12 mois est de cliquer dans le sélecteur de période comme un humain.
+// En cas d'échec (Google change son DOM), on log et on continue : au pire on
+// retombe sur le comportement par défaut (3 mois), jamais pire qu'avant.
+async function selectLast12MonthsPeriod(page) {
+    const opened = await clickFirstVisible(page, [
+        'button:has-text("3 derniers mois")',
+        'button:has-text("Last 3 months")',
+        '[aria-label*="Période"]',
+        '[aria-label*="Date"]',
+        '[role="button"]:has-text("mois")',
+        '[role="button"]:has-text("months")',
+    ]);
+    if (!opened) {
+        console.warn('[GSC] Sélecteur de période introuvable, période par défaut conservée (3 mois)');
+        return false;
+    }
+    await page.waitForTimeout(1000);
+
+    const selected = await clickFirstVisible(page, [
+        '[role="menuitemradio"]:has-text("12 derniers mois")',
+        '[role="menuitemradio"]:has-text("Last 12 months")',
+        'text=/^\\s*12 derniers mois\\s*$/i',
+        'text=/^\\s*Last 12 months\\s*$/i',
+        '[role="menuitemradio"]:has-text("12")',
+    ]);
+    if (!selected) {
+        console.warn('[GSC] Option "12 derniers mois" introuvable, période par défaut conservée (3 mois)');
+        return false;
+    }
+    await page.waitForTimeout(800);
+
+    // Certains layouts GSC exigent un clic sur "Appliquer" pour valider la période.
+    await clickFirstVisible(page, [
+        'button:has-text("Appliquer")',
+        'button:has-text("Apply")',
+    ]);
+
+    // Laisser le graphique et le tableau se recharger sur la nouvelle période.
+    await page.waitForTimeout(4000);
+    console.log('[GSC] Période "12 derniers mois" sélectionnée');
+    return true;
+}
+
 async function gotoGscPage(page, url, label) {
     console.log(`[GSC] Navigating to ${label}: ${url}`);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -276,6 +322,8 @@ export async function captureGscPerformance(siteUrl, auditId, googleCookies) {
         const propertyId = await resolvePropertyId(page, domain);
 
         // GSC Performance page
+        // NB: num_of_months n'est pas honoré par GSC (voir selectLast12MonthsPeriod) ;
+        // la vraie sélection de période se fait par interaction UI plus bas.
         const gscUrl = `https://search.google.com/search-console/performance/search-analytics?resource_id=${encodeURIComponent(propertyId)}&num_of_months=${GSC_TRAFFIC_LOOKBACK_MONTHS}`;
         await gotoGscPage(page, gscUrl, 'Performance');
 
@@ -293,6 +341,9 @@ export async function captureGscPerformance(siteUrl, auditId, googleCookies) {
             result.details = buildGoogleDomainAccessMessage(domain);
             return result;
         }
+
+        // Forcer la période sur 12 derniers mois (num_of_months ne suffit pas)
+        await selectLast12MonthsPeriod(page);
 
         // Try to extract total clicks from the page
         const metrics = await page.evaluate(() => {
@@ -503,6 +554,7 @@ export async function captureGscTopPages(siteUrl, auditId, googleCookies) {
         const propertyId = await resolvePropertyId(page, domain);
 
         // Performance page sorted by pages tab
+        // NB: num_of_months n'est pas honoré par GSC ; période forcée via UI plus bas.
         const gscUrl = `https://search.google.com/search-console/performance/search-analytics?resource_id=${encodeURIComponent(propertyId)}&num_of_months=${GSC_TRAFFIC_LOOKBACK_MONTHS}&breakdown=page`;
         await gotoGscPage(page, gscUrl, 'Top Pages');
 
@@ -520,6 +572,9 @@ export async function captureGscTopPages(siteUrl, auditId, googleCookies) {
             result.details = buildGoogleDomainAccessMessage(domain);
             return result;
         }
+
+        // Forcer la période sur 12 derniers mois (num_of_months ne suffit pas)
+        await selectLast12MonthsPeriod(page);
 
         // Click on "Pages" tab if visible
         try {
