@@ -1118,15 +1118,14 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
             ]);
             console.log(`[CREATE-AUDIT] 1/4 OK en ${Date.now() - t0}ms — record Airtable: ${airtableId}`);
         } catch (airtableErr) {
-            console.error(`[CREATE-AUDIT] 1/4 ÉCHEC/timeout Airtable: ${airtableErr.message} — on poursuit sans record Airtable.`);
-            airtableId = null;
-            // DIAGNOSTIC TEMPORAIRE: surfacer l'erreur exacte dans la réponse
-            return res.status(502).json({
-                __diag: 'createAirtableAudit_failed',
-                name: airtableErr.name,
-                message: airtableErr.message,
-                cause: String(airtableErr.cause || ''),
-                causeCode: airtableErr.cause?.code || null
+            console.error(`[CREATE-AUDIT] 1/4 ÉCHEC Airtable: ${airtableErr.message}`);
+            const msg = String(airtableErr.message || '');
+            const isQuota = /429|billing|limit exceeded/i.test(msg);
+            // On renvoie une erreur CLAIRE et immédiate (plus jamais de spinner infini).
+            return res.status(isQuota ? 429 : 502).json({
+                error: isQuota
+                    ? "Limite mensuelle de l'API Airtable atteinte : impossible de créer l'audit pour le moment. Mettez à niveau le plan Airtable ou attendez la réinitialisation mensuelle du quota."
+                    : `Création de l'enregistrement Airtable impossible : ${msg}`
             });
         }
 
