@@ -1120,6 +1120,14 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
         } catch (airtableErr) {
             console.error(`[CREATE-AUDIT] 1/4 ÉCHEC/timeout Airtable: ${airtableErr.message} — on poursuit sans record Airtable.`);
             airtableId = null;
+            // DIAGNOSTIC TEMPORAIRE: surfacer l'erreur exacte dans la réponse
+            return res.status(502).json({
+                __diag: 'createAirtableAudit_failed',
+                name: airtableErr.name,
+                message: airtableErr.message,
+                cause: String(airtableErr.cause || ''),
+                causeCode: airtableErr.cause?.code || null
+            });
         }
 
         // 2. Create Audit in DB
