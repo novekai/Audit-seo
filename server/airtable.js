@@ -82,16 +82,41 @@ function extractAirtableUrl(value, visited = new Set()) {
     return null;
 }
 
+// NB: le SDK Airtable (table.create) se fige de façon persistante dans le process
+// serveur (alors qu'un POST HTTP brut aboutit en ~0,25s). On contourne donc le SDK
+// avec un fetch direct sur l'API REST Airtable, avec timeout dur (AbortController).
 export async function createAirtableAudit(data) {
-    const record = await table.create({
+    const url = `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/${process.env.AIRTABLE_TABLE_ID}`;
+    const fields = {
         "Nom de site": data.siteName,
         "URL Site": data.siteUrl,
         "Lien Google Sheet": data.auditSheetUrl,
         "Lien Google Sheet plan d'action": data.actionPlanSheetUrl,
         "Lien du rapport my ranking metrics": data.mrmReportUrl,
         "Statut": "A faire"
-    });
-    return record.id;
+    };
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${process.env.AIRTABLE_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ fields, typecast: true }),
+            signal: controller.signal
+        });
+        if (!res.ok) {
+            const detail = await res.text().catch(() => '');
+            throw new Error(`Airtable create HTTP ${res.status}: ${detail.slice(0, 300)}`);
+        }
+        const json = await res.json();
+        return json.id;
+    } finally {
+        clearTimeout(timeout);
+    }
 }
 
 export async function updateAirtableStatut(recordId, statut) {
