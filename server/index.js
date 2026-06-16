@@ -1097,18 +1097,37 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
     const userId = req.user.userId;
     if (!db) return res.status(503).json({ error: 'Base de données en cours de chargement' });
 
+    console.log(`[CREATE-AUDIT] Requête reçue (user=${userId}, site="${siteName}")`);
+
     try {
-        // 1. Create Airtable Record
-        const airtableId = await createAirtableAudit(req.body);
+        // 1. Create Airtable Record — NON BLOQUANT (timeout 8s).
+        //    Le endpoint ne doit JAMAIS rester figé sur Airtable : en cas de lenteur/blocage,
+        //    on log, on met airtableId=null et on poursuit (le poller/worker resynchroniseront).
+        let airtableId = null;
+        try {
+            console.log('[CREATE-AUDIT] 1/4 Création du record Airtable...');
+            const t0 = Date.now();
+            airtableId = await Promise.race([
+                createAirtableAudit(req.body),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout Airtable 8s')), 8000))
+            ]);
+            console.log(`[CREATE-AUDIT] 1/4 OK en ${Date.now() - t0}ms — record Airtable: ${airtableId}`);
+        } catch (airtableErr) {
+            console.error(`[CREATE-AUDIT] 1/4 ÉCHEC/timeout Airtable: ${airtableErr.message} — on poursuit sans record Airtable.`);
+            airtableId = null;
+        }
 
         // 2. Create Audit in DB
+        console.log('[CREATE-AUDIT] 2/4 INSERT audit en base...');
         const auditId = uuidv4();
         await db.run(
             'INSERT INTO audits (id, user_id, nom_site, url_site, sheet_audit_url, sheet_plan_url, mrm_report_url, airtable_record_id, statut_global) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [auditId, userId, siteName, siteUrl, auditSheetUrl, actionPlanSheetUrl, mrmReportUrl, airtableId, 'EN_ATTENTE']
         );
+        console.log(`[CREATE-AUDIT] 2/4 OK — audit ${auditId} créé en base.`);
 
         // 3. Initialize Steps — matches exactly the step_keys used by worker.js
+        console.log('[CREATE-AUDIT] 3/4 Initialisation des étapes...');
         const steps = [
             // Phase 1: Public captures (no auth)
             'robots_txt', 'sitemap', 'logo',
@@ -1141,8 +1160,10 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
                 [uuidv4(), auditId, stepKey, 'EN_ATTENTE']
             );
         }
+        console.log(`[CREATE-AUDIT] 3/4 OK — ${steps.length} étapes initialisées.`);
 
         // 5. Add to BullMQ queue with timeout protection
+        console.log('[CREATE-AUDIT] 4/4 Mise en file BullMQ...');
         try {
             const queuePromise = auditQueue.add(`audit-${auditId}`, { auditId, userId });
             const timeoutPromise = new Promise((_, reject) =>
@@ -1176,6 +1197,7 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
         const createdAudit = await db.get('SELECT * FROM audits WHERE id = ?', [auditId]);
         io.emit('audit:created', createdAudit);
 
+        console.log(`[CREATE-AUDIT] ✅ Terminé — réponse 201 pour audit ${auditId}.`);
         res.status(201).json({ auditId, message: 'Audit mis en file avec succès', audit: createdAudit });
     } catch (err) {
         console.error('SERVER ERROR (audit):', err);
