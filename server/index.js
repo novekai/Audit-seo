@@ -1,4 +1,9 @@
 import 'dotenv/config';
+import dns from 'node:dns';
+// Forcer la résolution IPv4 en priorité : les requêtes HTTP sortantes (fetch vers Airtable)
+// déclenchées depuis un handler de requête externe se figeaient/échouaient en tentant l'IPv6
+// dans le conteneur Railway, alors que les appels internes (poller/worker/localhost) passaient.
+dns.setDefaultResultOrder('ipv4first');
 import express from 'express';
 import cors from 'cors';
 import jwt from 'jsonwebtoken';
