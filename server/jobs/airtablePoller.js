@@ -21,15 +21,18 @@ function mapAirtableStatusToLocalStatus(status) {
     }
 }
 
-export async function initAirtablePoller(io, db) {
-    console.log('[POLLER] Airtable Sync initialized (Interval: 20s)');
+// Intervalle de polling configurable. Défaut 120s (au lieu de 20s) pour réduire
+// fortement la consommation de l'API Airtable (limite mensuelle du compte cliente).
+const POLL_INTERVAL_MS = Math.max(20000, parseInt(process.env.AIRTABLE_POLL_INTERVAL_MS, 10) || 120000);
 
-    // Poll every 20 seconds for better real-time feel
+export async function initAirtablePoller(io, db) {
+    console.log(`[POLLER] Airtable Sync initialized (Interval: ${Math.round(POLL_INTERVAL_MS / 1000)}s)`);
+
     setInterval(() => {
         syncAirtableToDb(io, db).catch(err => {
             console.error('[POLLER] Sync error:', err);
         });
-    }, 20000);
+    }, POLL_INTERVAL_MS);
 
     // Initial sync
     syncAirtableToDb(io, db).catch(err => console.error('[POLLER] Initial sync error:', err));
@@ -40,7 +43,7 @@ async function syncAirtableToDb(io, db) {
 
     try {
         const records = await table.select({
-            filterByFormula: 'OR({Statut} = "A faire", {Statut} = "En cours", {Statut} = "fait", {Statut} = "Erreur")',
+            filterByFormula: '{Statut} = "A faire"',
             maxRecords: 50
         }).all();
 
