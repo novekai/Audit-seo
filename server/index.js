@@ -1119,8 +1119,14 @@ app.post('/api/audits', authenticateToken, async (req, res) => {
             console.log(`[CREATE-AUDIT] 1/4 OK en ${Date.now() - t0}ms — record Airtable: ${airtableId}`);
         } catch (airtableErr) {
             console.error(`[CREATE-AUDIT] 1/4 ÉCHEC Airtable: ${airtableErr.message}`);
-            // DIAGNOSTIC TEMPORAIRE: renvoyer le détail brut exact reçu d'Airtable
-            return res.status(599).json({ __diag: true, rawMessage: String(airtableErr.message || ''), cause: String(airtableErr.cause || '') });
+            const msg = String(airtableErr.message || '');
+            const isQuota = /429|billing|limit exceeded/i.test(msg);
+            // Erreur claire et immédiate (plus jamais de spinner infini).
+            return res.status(isQuota ? 429 : 502).json({
+                error: isQuota
+                    ? "Limite mensuelle de l'API Airtable atteinte : impossible de créer l'audit pour le moment. Mettez à niveau le plan Airtable du compte (chatminds.dev) ou attendez la réinitialisation mensuelle du quota."
+                    : `Création de l'enregistrement Airtable impossible : ${msg}`
+            });
         }
 
         // 2. Create Audit in DB
