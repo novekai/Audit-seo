@@ -521,6 +521,24 @@ function watchActionPlanLinkInAirtable(auditId, airtableRecordId) {
     return watcherPromise;
 }
 
+// Récupère le refresh token Google reconnecté en base (service_credentials),
+// qui possède le scope Drive (drive.file) nécessaire au partage du Sheet.
+// Repli sur la variable d'env GOOGLE_REFRESH_TOKEN si rien en base.
+async function getDbGoogleRefreshToken() {
+    try {
+        const row = await db.get(
+            "SELECT encrypted_data FROM service_credentials WHERE service = 'google' AND status = 'active' ORDER BY updated_at DESC LIMIT 1"
+        );
+        if (row) {
+            const data = JSON.parse(decrypt(row.encrypted_data));
+            if (data?.refresh_token) return data.refresh_token;
+        }
+    } catch (e) {
+        console.error('[ACTION PLAN] Lecture du token Google en base échouée:', e.message);
+    }
+    return process.env.GOOGLE_REFRESH_TOKEN || null;
+}
+
 async function triggerGoogleSlidesWebhook(recordId, maxRetries = 3) {
     const webhookCandidates = buildSlidesWebhookCandidates(recordId);
     let lastError = null;
@@ -1527,10 +1545,11 @@ app.post('/api/audits/:id/generate-action-plan', authenticateToken, async (req, 
             const ACTION_PLAN_RETRY_BASE_DELAY_MS = 5000;
             let actionPlanResult;
             let lastActionPlanErr;
+            const googleRefreshToken = await getDbGoogleRefreshToken();
 
             for (let attempt = 0; attempt <= ACTION_PLAN_MAX_RETRIES; attempt++) {
                 try {
-                    actionPlanResult = await generateActionPlanSheet(audit);
+                    actionPlanResult = await generateActionPlanSheet(audit, googleRefreshToken);
                     break;
                 } catch (retryErr) {
                     lastActionPlanErr = retryErr;

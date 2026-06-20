@@ -56,8 +56,10 @@ const ACTION_PLAN_OUTPUT_TAB_CONFIGS = [
 
 // ─── Google Auth & Sheets ───
 
-function createGoogleAuth() {
-    if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.GOOGLE_REFRESH_TOKEN) {
+function createGoogleAuth(refreshToken) {
+    // Priorité au token passé (reconnecté en base, avec scope Drive) ; repli sur l'env.
+    const token = refreshToken || process.env.GOOGLE_REFRESH_TOKEN;
+    if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !token) {
         throw new Error('Les accès Google Sheets ne sont pas configurés côté backend.');
     }
 
@@ -66,7 +68,7 @@ function createGoogleAuth() {
         process.env.GOOGLE_CLIENT_SECRET
     );
 
-    oauth2.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+    oauth2.setCredentials({ refresh_token: token });
     return oauth2;
 }
 
@@ -967,12 +969,12 @@ function buildFormattingRequests(sheetId, dataRowCount) {
 
 // ─── Fonction principale ───
 
-export async function generateActionPlanSheet(audit) {
+export async function generateActionPlanSheet(audit, refreshToken) {
     if (!audit) {
         throw new Error("Audit introuvable pour la génération du plan d'actions.");
     }
 
-    const auth = createGoogleAuth();
+    const auth = createGoogleAuth(refreshToken);
     const sheets = createSheetsClient(auth);
     const drive = createDriveClient(auth);
 
