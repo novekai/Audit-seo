@@ -57,7 +57,10 @@ const DEFAULT_GOOGLE_ACTION_PLAN_WEBHOOK_URL =
     process.env.GOOGLE_ACTION_PLAN_WEBHOOK_URL ||
     '';
 const SLIDES_GENERATION_LOCK_TIMEOUT_MS = 15 * 60 * 1000;
-const SLIDES_AIRTABLE_POLL_INTERVAL_MS = 1000;
+// Boucle d'attente du lien Slides/Plan d'action dans Airtable. Intervalle porté de
+// 1s à 8s (configurable) : à 1s, une génération de 10 min faisait jusqu'à ~600 lectures
+// Airtable par essai — gros consommateur du quota. À 8s : ~75 lectures/essai.
+const SLIDES_AIRTABLE_POLL_INTERVAL_MS = Math.max(2000, parseInt(process.env.SLIDES_POLL_INTERVAL_MS, 10) || 8000);
 const SLIDES_AIRTABLE_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 const GOOGLE_SLIDES_URL_REGEX = /https?:\/\/docs\.google\.com\/presentation\/d\/[^\s"'<>]+/i;
 const GOOGLE_SHEETS_URL_REGEX = /https?:\/\/docs\.google\.com\/spreadsheets\/d\/[^\s"'<>]+/i;
