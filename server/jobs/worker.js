@@ -182,10 +182,19 @@ export const initWorker = (io, db) => {
             // HELPER: Load encrypted cookies for a service (legacy)
             // ------------------------------------------------------------------
             const getSessionCookies = async (service) => {
-                const sessionRow = await db.get(
+                let sessionRow = await db.get(
                     'SELECT encrypted_cookies FROM user_sessions WHERE user_id = ? AND service = ? ORDER BY created_at DESC LIMIT 1',
                     [userId, service]
                 );
+                if (!sessionRow) {
+                    // Repli: session la plus récente pour ce service, quel que soit le user.
+                    // (le poller crée les audits sous defaultUser, alors que la session est
+                    //  importée sous le compte connecté -> sinon le worker ne la trouve pas)
+                    sessionRow = await db.get(
+                        'SELECT encrypted_cookies FROM user_sessions WHERE service = ? ORDER BY created_at DESC LIMIT 1',
+                        [service]
+                    );
+                }
                 if (!sessionRow) {
                     console.log(`[WORKER] [JOB ${job.id}] No session found in DB for service: ${service}`);
                     return null;
@@ -206,10 +215,17 @@ export const initWorker = (io, db) => {
             // HELPER: Load credentials for auto-login (new system)
             // ------------------------------------------------------------------
             const getServiceCredentials = async (service) => {
-                const row = await db.get(
+                let row = await db.get(
                     'SELECT encrypted_data, auth_type FROM service_credentials WHERE user_id = ? AND service = ? AND status = ?',
                     [userId, service, 'active']
                 );
+                if (!row) {
+                    // Repli: credential active la plus récente pour ce service, quel que soit le user.
+                    row = await db.get(
+                        'SELECT encrypted_data, auth_type FROM service_credentials WHERE service = ? AND status = ? ORDER BY updated_at DESC LIMIT 1',
+                        [service, 'active']
+                    );
+                }
                 if (!row) {
                     console.log(`[WORKER] [JOB ${job.id}] No credentials found for service: ${service}`);
                     return null;
