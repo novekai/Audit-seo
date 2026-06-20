@@ -1343,6 +1343,7 @@ app.post('/api/audits/:id/generate-slides', authenticateToken, async (req, res) 
         await db.run(
             `UPDATE audits
              SET slides_generation_status = ?,
+                 google_slides_url = NULL,
                  slides_generation_error = NULL,
                  slides_review_confirmed_at = NULL,
                  google_action_plan_url = NULL,
